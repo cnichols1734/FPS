@@ -257,8 +257,9 @@ namespace ArenaFps.Editor
                     src = SrcRough; baseTile = 13f;
                     tint = new Color(0.78f, 0.76f, 0.72f); break;
                 case "Ground":
-                    // Large ground plane — readable 4K detail; keep EL_10 whole-frame luma ≤0.55
-                    src = SrcRough; baseTile = 14f;
+                    // Large 118×154m plane: ~2.0m/repeat so grit reads at 1.7m eye height.
+                    // Prior 14× tiling collapsed to a featureless sheet at walking distance.
+                    src = SrcRough; baseTile = 58f;
                     tint = new Color(0.58f, 0.54f, 0.48f); break;
                 default:
                     // Remaining asphalt connectors — hash pick among 3

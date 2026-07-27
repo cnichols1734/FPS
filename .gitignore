@@ -102,3 +102,12 @@ Tools/AssetFetch/verify_*.cs
 # GitHub 100MB hard limit — keep locally for A/B sky tests
 Assets/_Project/Art/Textures/HDRI/cloud_layers_8k.hdr
 Assets/_Project/Art/Textures/HDRI/cloud_layers_8k.hdr.meta
+Tools/AssetFetch/audit_*.cs
+Tools/AssetFetch/cleanup_*.cs
+Tools/AssetFetch/final_*.cs
+Tools/AssetFetch/find_*.cs
+Tools/AssetFetch/force_*.cs
+Tools/AssetFetch/kill_*.cs
+Tools/AssetFetch/restore_*.cs
+Tools/AssetFetch/run_*.cs
+Tools/AssetFetch/scale_*.cs

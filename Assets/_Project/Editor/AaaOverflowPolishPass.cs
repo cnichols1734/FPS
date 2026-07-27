@@ -913,116 +913,12 @@ namespace ArenaFps.Editor
                 packed++;
             }
 
-            // Hard-coded frustum anchors — algorithmic side offsets still miss some looks.
-            ForceVisibleAnchors();
+            // Frustum-filler OP_Force* anchors DISABLED — they placed signs/AC/cables in open
+            // air with no wall/pole support (visible dark cubes against the sky). Wall-mounted
+            // detail must come from Stage4 facade fill or ZZZ placement with lateral snap.
+            // ForceVisibleAnchors();  // retired 2026-07-27 (AaaCorrectnessPass)
 
-            Debug.Log($"[OP] Stage5 frame-packed {frames.Length} standard views");
-        }
-
-        static void ForceVisibleAnchors()
-        {
-            // Thick sagging cable segments (readable against sky)
-            void ThickCable(int idx, Vector3 a, Vector3 b)
-            {
-                int segs = 7;
-                for (int s = 0; s < segs; s++)
-                {
-                    float t0 = s / (float)segs, t1 = (s + 1) / (float)segs;
-                    var p0 = Vector3.Lerp(a, b, t0); p0.y -= Mathf.Sin(t0 * Mathf.PI) * Vector3.Distance(a, b) * 0.1f;
-                    var p1 = Vector3.Lerp(a, b, t1); p1.y -= Mathf.Sin(t1 * Mathf.PI) * Vector3.Distance(a, b) * 0.1f;
-                    var seg = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-                    seg.name = $"OP_ForceCable_{idx}_{s}";
-                    seg.transform.SetParent(_root, true);
-                    seg.transform.position = (p0 + p1) * 0.5f;
-                    seg.transform.up = (p1 - p0).normalized;
-                    seg.transform.localScale = new Vector3(0.09f, (p1 - p0).magnitude * 0.5f, 0.09f);
-                    Object.DestroyImmediate(seg.GetComponent<Collider>());
-                    ApplyMat(seg.GetComponent<Renderer>(), Mats["cable"], 1f);
-                    SetStatic(seg);
-                }
-                _addedCables++;
-                _addedProps++;
-            }
-
-            void Box(string name, Vector3 p, Vector3 scale, string matKey, bool col)
-            {
-                var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                go.name = name;
-                go.transform.SetParent(_root, true);
-                go.transform.position = p;
-                go.transform.localScale = scale;
-                if (!col) Object.DestroyImmediate(go.GetComponent<Collider>());
-                ApplyMat(go.GetComponent<Renderer>(), Mats.ContainsKey(matKey) ? Mats[matKey] : Mats["metal"], 1f);
-                SetStatic(go);
-                _addedProps++;
-            }
-
-            ThickCable(300, new Vector3(26, 7.2f, -8), new Vector3(38, 7.6f, 6));
-            ThickCable(301, new Vector3(25, 7.5f, -4), new Vector3(40, 7.0f, 8));
-            ThickCable(302, new Vector3(27, 6.9f, -2), new Vector3(39, 7.8f, 2));
-            Box("OP_ForceAC_M0", new Vector3(35.5f, 3.2f, 2.5f), new Vector3(1.1f, 0.7f, 0.55f), "metal", false);
-            Box("OP_ForceAC_M1", new Vector3(37.2f, 4.8f, 1.0f), new Vector3(1.0f, 0.65f, 0.5f), "metal", false);
-            Box("OP_ForceAC_M2", new Vector3(33.8f, 3.0f, -1.5f), new Vector3(1.15f, 0.7f, 0.55f), "metal", false);
-            _addedAc += 3;
-            Box("OP_ForceSign_M0", new Vector3(36.0f, 3.8f, 3.2f), new Vector3(2.4f, 1.0f, 0.08f), "wood", false);
-            Box("OP_ForceSign_M1", new Vector3(34.5f, 5.0f, 0.5f), new Vector3(1.8f, 0.8f, 0.08f), "metal", false);
-            Box("OP_ForceSign_M2", new Vector3(38.0f, 3.5f, -0.5f), new Vector3(2.0f, 0.9f, 0.08f), "wood", false);
-            _addedSigns += 3;
-            Box("OP_ForceRubble_M0", new Vector3(30f, 0.45f, -2f), new Vector3(2.2f, 0.9f, 1.6f), "rubble", true);
-            Box("OP_ForceRubble_M1", new Vector3(33f, 0.4f, 3f), new Vector3(1.8f, 0.8f, 1.4f), "rubble", true);
-            _addedRubble += 2;
-            Box("OP_ForceDirt_M0", new Vector3(34.5f, 0.2f, 4.5f), new Vector3(2.5f, 0.4f, 1.2f), "dirt", false);
-            Box("OP_ForceDirt_M1", new Vector3(36f, 0.18f, -2.5f), new Vector3(2.0f, 0.35f, 1.0f), "dirt", false);
-            Box("OP_ForceKerb_M0", new Vector3(32f, 0.12f, 0f), new Vector3(0.45f, 0.25f, 8f), "concrete", false);
-            _addedKerbs++;
-
-            ThickCable(310, new Vector3(-6, 7.2f, -8), new Vector3(10, 7.5f, 6));
-            ThickCable(311, new Vector3(-4, 7.6f, -6), new Vector3(8, 7.1f, 10));
-            Box("OP_ForceAC_A0", new Vector3(6f, 3.4f, 2f), new Vector3(1.1f, 0.7f, 0.5f), "metal", false);
-            Box("OP_ForceAC_A1", new Vector3(8f, 4.6f, 5f), new Vector3(1.0f, 0.65f, 0.5f), "metal", false);
-            _addedAc += 2;
-            Box("OP_ForceSign_A0", new Vector3(7f, 3.6f, 3f), new Vector3(2.2f, 0.95f, 0.08f), "wood", false);
-            Box("OP_ForceSign_A1", new Vector3(5f, 4.8f, 6f), new Vector3(1.7f, 0.75f, 0.08f), "metal", false);
-            Box("OP_ForceSign_A2", new Vector3(9f, 3.2f, 1f), new Vector3(1.9f, 0.85f, 0.08f), "wood", false);
-            _addedSigns += 3;
-            Box("OP_ForceRubble_A0", new Vector3(3f, 0.45f, -4f), new Vector3(2f, 0.9f, 1.5f), "rubble", true);
-            _addedRubble++;
-            Box("OP_ForceDirt_A0", new Vector3(7f, 0.2f, 0f), new Vector3(2.4f, 0.4f, 1.1f), "dirt", false);
-
-            ThickCable(320, new Vector3(-10, 7.3f, 16), new Vector3(8, 7.6f, 30));
-            Box("OP_ForceAC_B0", new Vector3(-6f, 3.5f, 22f), new Vector3(1.1f, 0.7f, 0.5f), "metal", false);
-            Box("OP_ForceAC_B1", new Vector3(-4f, 4.8f, 26f), new Vector3(1.0f, 0.65f, 0.5f), "metal", false);
-            _addedAc += 2;
-            Box("OP_ForceSign_B0", new Vector3(-5f, 3.8f, 24f), new Vector3(2.1f, 0.9f, 0.08f), "wood", false);
-            Box("OP_ForceSign_B1", new Vector3(-7f, 5.0f, 27f), new Vector3(1.6f, 0.7f, 0.08f), "metal", false);
-            Box("OP_ForceSign_B2", new Vector3(-3f, 3.3f, 20f), new Vector3(1.8f, 0.8f, 0.08f), "wood", false);
-            _addedSigns += 3;
-            Box("OP_ForceRubble_B0", new Vector3(0f, 0.45f, 20f), new Vector3(2f, 0.9f, 1.5f), "rubble", true);
-            _addedRubble++;
-
-            ThickCable(330, new Vector3(-40, 7.2f, -2), new Vector3(-26, 7.5f, 14));
-            ThickCable(331, new Vector3(-38, 7.6f, 0), new Vector3(-24, 7.0f, 10));
-            Box("OP_ForceAC_W0", new Vector3(-35f, 3.3f, 4f), new Vector3(1.1f, 0.7f, 0.5f), "metal", false);
-            Box("OP_ForceAC_W1", new Vector3(-37f, 4.7f, 8f), new Vector3(1.0f, 0.65f, 0.5f), "metal", false);
-            _addedAc += 2;
-            Box("OP_ForceSign_W0", new Vector3(-36f, 3.7f, 6f), new Vector3(2.0f, 0.9f, 0.08f), "wood", false);
-            Box("OP_ForceSign_W1", new Vector3(-34f, 4.9f, 10f), new Vector3(1.7f, 0.75f, 0.08f), "metal", false);
-            Box("OP_ForceSign_W2", new Vector3(-38f, 3.2f, 2f), new Vector3(1.9f, 0.85f, 0.08f), "wood", false);
-            _addedSigns += 3;
-            Box("OP_ForceRubble_W0", new Vector3(-32f, 0.45f, 2f), new Vector3(2f, 0.9f, 1.5f), "rubble", true);
-            _addedRubble++;
-            Box("OP_ForceDirt_W0", new Vector3(-35f, 0.2f, 6f), new Vector3(2.2f, 0.4f, 1.0f), "dirt", false);
-
-            ThickCable(340, new Vector3(-4, 7.2f, 4), new Vector3(16, 7.5f, 20));
-            Box("OP_ForceAC_D0", new Vector3(10f, 3.4f, 12f), new Vector3(1.1f, 0.7f, 0.5f), "metal", false);
-            Box("OP_ForceAC_D1", new Vector3(12f, 4.8f, 15f), new Vector3(1.0f, 0.65f, 0.5f), "metal", false);
-            _addedAc += 2;
-            Box("OP_ForceSign_D0", new Vector3(11f, 3.7f, 14f), new Vector3(2.1f, 0.9f, 0.08f), "wood", false);
-            Box("OP_ForceSign_D1", new Vector3(9f, 5.0f, 16f), new Vector3(1.6f, 0.7f, 0.08f), "metal", false);
-            Box("OP_ForceSign_D2", new Vector3(13f, 3.2f, 10f), new Vector3(1.8f, 0.8f, 0.08f), "wood", false);
-            _addedSigns += 3;
-            Box("OP_ForceRubble_D0", new Vector3(6f, 0.45f, 8f), new Vector3(2f, 0.9f, 1.5f), "rubble", true);
-            _addedRubble++;
+            Debug.Log($"[OP] Stage5 frame-packed {frames.Length} standard views (no ForceVisibleAnchors)");
         }
 
         // ═══════════════════════════════════════════════════════════════════════

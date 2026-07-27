@@ -32,6 +32,10 @@ namespace ArenaFps.Feedback
                     return _instance;
                 }
                 var go = new GameObject("__ImpactFx");
+                // Never persist into a saved scene — pooled casings used to reappear as
+                // "invisible colliders" after a dirty Play-mode save.
+                go.hideFlags = HideFlags.DontSave;
+                Object.DontDestroyOnLoad(go);
                 _instance = go.AddComponent<ImpactFx>();
                 _instance.EnsureBuilt();
                 return _instance;
@@ -532,11 +536,14 @@ namespace ArenaFps.Feedback
 
                 // The cylinder primitive already ships a capsule collider; reshape it rather than
                 // swapping it, which would leave a duplicate alive until end of frame.
+                // Keep collider disabled while pooled so inactive casings never audit as
+                // invisible collision volumes in the editor.
                 if (go.GetComponent<Collider>() is CapsuleCollider capsule)
                 {
                     capsule.radius = 0.5f;
                     capsule.height = 2f;
                     capsule.direction = 1;
+                    capsule.enabled = false;
                 }
 
                 var rb = go.AddComponent<Rigidbody>();
