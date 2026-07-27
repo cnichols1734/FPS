@@ -66,6 +66,39 @@ animated-fps-hands-rifle-animation-pack.zip
 _import_tmp/
 _research/
 
+# Staging area for downloaded source art. Files land here first so Unity does
+# not live-import mid-edit; only curated results are copied into Assets/.
+_incoming/
+
 # Source character archives (imported assets live under Assets/)
 black-squad-soldier-character.zip
 free-military-soldier-rigged.zip
+
+# Local source dumps / scratch (never ship)
+_backup/
+zzbuildings/
+zzz/
+Tools/AssetFetch/__pycache__/
+Tools/AssetFetch/*.json
+Tools/AssetFetch/apply_*.cs
+Tools/AssetFetch/bisect_*.cs
+Tools/AssetFetch/cumul.cs
+Tools/AssetFetch/detect_*.cs
+Tools/AssetFetch/diag_*.cs
+Tools/AssetFetch/diag2.cs
+Tools/AssetFetch/final_verify.cs
+Tools/AssetFetch/find_spawn.cs
+Tools/AssetFetch/fix_*.cs
+Tools/AssetFetch/probe_*.cs
+Tools/AssetFetch/remeasure.cs
+Tools/AssetFetch/scene_inventory.cs
+Tools/AssetFetch/shot_*.cs
+Tools/AssetFetch/spawn_candidates.cs
+Tools/AssetFetch/staged_*.cs
+Tools/AssetFetch/strip_invis.cs
+Tools/AssetFetch/test_*.cs
+Tools/AssetFetch/verify_*.cs
+
+# GitHub 100MB hard limit — keep locally for A/B sky tests
+Assets/_Project/Art/Textures/HDRI/cloud_layers_8k.hdr
+Assets/_Project/Art/Textures/HDRI/cloud_layers_8k.hdr.meta

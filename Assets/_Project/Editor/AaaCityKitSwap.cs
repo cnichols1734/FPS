@@ -117,7 +117,8 @@ namespace ArenaFps.Editor
 
         /// <summary>
         /// Hide renderers on mid primitive masses + FD mid facade art.
-        /// Keep *_PBMass BoxColliders as invisible lane blockers (Kenney MeshColliders may be imperfect).
+        /// CRITICAL: if a renderer is hidden, its collider is destroyed in the same operation.
+        /// No invisible walls — Kenney/PolyHaven replacements must provide visible collision.
         /// </summary>
         static void HidePrimitiveMidVisuals(Transform map)
         {
@@ -149,13 +150,9 @@ namespace ArenaFps.Editor
                 foreach (var r in t.GetComponents<Renderer>())
                     r.enabled = false;
 
-                // Drop trim/window/parapet colliders; keep only the main mass blockers.
-                bool keepCollider = midPb && t.name.EndsWith("_PBMass");
-                if (!keepCollider)
-                {
-                    foreach (var c in t.GetComponents<Collider>())
-                        c.enabled = false;
-                }
+                // Never leave colliders on hidden geometry.
+                foreach (var c in t.GetComponents<Collider>())
+                    Object.DestroyImmediate(c);
             }
         }
 

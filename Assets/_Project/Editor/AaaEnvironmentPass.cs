@@ -12,8 +12,10 @@ using UnityEngine.SceneManagement;
 namespace ArenaFps.Editor
 {
     /// <summary>
-    /// One-click environment art pass for Arena: dense urban 3-lane TDM dressing, static geometry,
-    /// custom materials/textures, capture cameras, and combat/nav re-prep.
+    /// AAA Environment Pass — Overflow-derived 6v6 arena geometry (source of truth).
+    /// Target footprint: 118 x 154 m (~3.03x live 5,995 m2). Spec positions scaled by 1.22;
+    /// human-scale dimensions (lane widths, storeys, doors, cover heights) stay unscaled.
+    /// Rule: every collider must have a visible mesh; decorative trim above 2.2 m has no collider.
     /// </summary>
     public static class AaaEnvironmentPass
     {
@@ -21,25 +23,29 @@ namespace ArenaFps.Editor
         const string TextureDir = "Assets/_Project/Art/Textures/AaaGenerated";
         const string MaterialDir = "Assets/_Project/Art/Materials/Map";
 
+        const float PosScale = 1.22f;
+        const float MapWidth = 118f;
+        const float MapLength = 154f;
+        const float WallHalfX = 60f;
+        const float WallHalfZ = 78f;
+        const float WallHeight = 8f;
+        const float HeadHeight = 2.2f;
+
         static readonly HashSet<string> PreserveRoots = new()
         {
-            "Directional Light",
-            "Global Volume",
-            "Player",
-            "PlayerSpawn",
-            "Spawn_Blue_1",
-            "Spawn_Blue_2",
-            "Spawn_Blue_3",
-            "Spawn_Blue_4",
-            "Spawn_Blue_5",
-            "Spawn_Red_1",
-            "Spawn_Red_2",
-            "Spawn_Red_3",
-            "Spawn_Red_4",
-            "Spawn_Red_5",
+            "Directional Light", "Global Volume", "Player", "PlayerSpawn",
+            "Spawn_Blue_1", "Spawn_Blue_2", "Spawn_Blue_3",
+            "Spawn_Blue_4", "Spawn_Blue_5", "Spawn_Blue_6",
+            "Spawn_Red_1", "Spawn_Red_2", "Spawn_Red_3",
+            "Spawn_Red_4", "Spawn_Red_5", "Spawn_Red_6",
         };
 
         static readonly Dictionary<string, Material> Mats = new();
+
+        static float SX(float x) => x * PosScale;
+        static float SZ(float z) => z * PosScale;
+        static Vector3 P(float x, float z) => new(x * PosScale, 0f, z * PosScale);
+        static Vector3 P(float x, float y, float z) => new(x * PosScale, y, z * PosScale);
 
         [MenuItem("Arena FPS/AAA Environment Pass")]
         public static void Run()
@@ -58,18 +64,17 @@ namespace ArenaFps.Editor
             SetStatic(root);
 
             BuildGroundAndShell(root.transform);
-            BuildIterationOneLayout(root.transform);
-            BuildIterationTwoSilhouetteAndTrim(root.transform);
-            BuildIterationThreePropsAndStory(root.transform);
+            BuildOverflowStructures(root.transform);
+            BuildDoglegLanes(root.transform);
+            BuildVerticality(root.transform);
+            BuildCoverAndDensity(root.transform);
+            BuildSilhouetteDressing(root.transform);
             BuildCaptureRig();
             PlaceSpawnsAndPlayer();
             TuneLighting();
+            StripIllegalColliders(root.transform);
 
-            // Combat surface tagging can fail if cover names diverge; never abort the art pass.
-            try
-            {
-                SpawnArenaCombat.Run();
-            }
+            try { SpawnArenaCombat.Run(); }
             catch (System.Exception ex)
             {
                 Debug.LogWarning($"[ArenaFps] SpawnArenaCombat skipped after environment rebuild: {ex.Message}");
@@ -79,7 +84,7 @@ namespace ArenaFps.Editor
             EditorSceneManager.MarkSceneDirty(scene);
             EditorSceneManager.SaveScene(scene);
             AssetDatabase.SaveAssets();
-            Debug.Log("[ArenaFps] AAA Environment Pass complete: urban 3-lane map rebuilt, dressed, saved, and navmesh baked.");
+            Debug.Log($"[ArenaFps] AAA Environment Pass complete: Overflow layout {MapWidth}x{MapLength} m (~3.03x baseline area).");
         }
 
         static void ClearPreviousEnvironment()
@@ -87,21 +92,21 @@ namespace ArenaFps.Editor
             var doomed = new List<GameObject>();
             foreach (var go in SceneManager.GetActiveScene().GetRootGameObjects())
             {
-                if (PreserveRoots.Contains(go.name))
-                    continue;
+                if (PreserveRoots.Contains(go.name)) continue;
+                string n = go.name;
+                if (n == "ThreeLaneMap" || n == "__NavMeshSurface" || n == "__AaaCaptureRig"
+                    || n == "__NavMeshLinks" || n == "CK_CityKitRoot" || n == "__AAA_COD_LaneDressingFix"
+                    || n == "AAA_Lighting_Rig" || n == "AAA_ReflectionProbe_Mid")
+                { doomed.Add(go); continue; }
 
-                if (go.name == "ThreeLaneMap" || go.name == "__NavMeshSurface" || go.name == "__AaaCaptureRig")
-                {
-                    doomed.Add(go);
-                    continue;
-                }
-
-                if (go.name.StartsWith("PB_") || go.name.StartsWith("AAA_") || go.name.StartsWith("Cover_") || go.name.StartsWith("Prop_"))
+                if (n.StartsWith("PB_") || n.StartsWith("AAA_") || n.StartsWith("Cover_")
+                    || n.StartsWith("Prop_") || n.StartsWith("Bldg_") || n.StartsWith("P2_")
+                    || n.StartsWith("FD_") || n.StartsWith("EL_") || n.StartsWith("PH_")
+                    || n.StartsWith("KP_") || n.StartsWith("LD_") || n.StartsWith("CK_")
+                    || n.StartsWith("Wall_") || n.StartsWith("Road_") || n.StartsWith("Col_"))
                     doomed.Add(go);
             }
-
-            foreach (var go in doomed)
-                Object.DestroyImmediate(go);
+            foreach (var go in doomed) Object.DestroyImmediate(go);
         }
 
         static void EnsureFolders()
@@ -115,9 +120,7 @@ namespace ArenaFps.Editor
 
         static void EnsureFolder(string path)
         {
-            if (AssetDatabase.IsValidFolder(path))
-                return;
-
+            if (AssetDatabase.IsValidFolder(path)) return;
             var normalized = path.Replace("\\", "/");
             var parts = normalized.Split('/');
             var current = parts[0];
@@ -130,6 +133,7 @@ namespace ArenaFps.Editor
             }
         }
 
+        #region Textures / Materials
         static void BuildProceduralTextures()
         {
             CreateTexture("AAA_AsphaltCracked.png", new Color(0.09f, 0.095f, 0.1f), new Color(0.24f, 0.24f, 0.23f), 11, TexturePattern.Asphalt);
@@ -142,6 +146,7 @@ namespace ArenaFps.Editor
             CreateTexture("AAA_ChainLink.png", new Color(0.05f, 0.06f, 0.06f), new Color(0.55f, 0.61f, 0.62f), 83, TexturePattern.ChainLink);
             CreateTexture("AAA_GraffitiPoster.png", new Color(0.10f, 0.10f, 0.12f), new Color(0.88f, 0.66f, 0.23f), 97, TexturePattern.Graffiti);
             CreateTexture("AAA_HazardStripe.png", new Color(0.06f, 0.055f, 0.045f), new Color(1.0f, 0.72f, 0.08f), 101, TexturePattern.Hazard);
+            CreateTexture("AAA_DirtPacked.png", new Color(0.28f, 0.22f, 0.14f), new Color(0.52f, 0.42f, 0.28f), 109, TexturePattern.Concrete);
         }
 
         enum TexturePattern { Asphalt, Concrete, Brick, Plaster, Corrugated, Wood, Fabric, ChainLink, Graffiti, Hazard }
@@ -150,73 +155,56 @@ namespace ArenaFps.Editor
         {
             var path = $"{TextureDir}/{fileName}";
             var tex = new Texture2D(256, 256, TextureFormat.RGBA32, false, false);
-            tex.name = Path.GetFileNameWithoutExtension(fileName);
-
             for (int y = 0; y < tex.height; y++)
+            for (int x = 0; x < tex.width; x++)
             {
-                for (int x = 0; x < tex.width; x++)
+                float n = Hash01(x, y, seed) * 0.55f + Mathf.PerlinNoise((x + seed) * 0.055f, (y - seed) * 0.055f) * 0.45f;
+                var c = Color.Lerp(low, high, n);
+                switch (pattern)
                 {
-                    float n = Hash01(x, y, seed) * 0.55f + Mathf.PerlinNoise((x + seed) * 0.055f, (y - seed) * 0.055f) * 0.45f;
-                    var c = Color.Lerp(low, high, n);
-
-                    switch (pattern)
-                    {
-                        case TexturePattern.Asphalt:
-                            if ((x + seed * 7 + y / 9) % 97 < 2) c *= 0.46f;
-                            if ((x * 3 + y * 5 + seed) % 211 < 3) c = Color.Lerp(c, Color.white, 0.16f);
-                            break;
-                        case TexturePattern.Concrete:
-                            if (x % 64 < 2 || y % 64 < 2) c *= 0.58f;
-                            if ((x + y + seed) % 73 < 2) c = Color.Lerp(c, Color.black, 0.12f);
-                            break;
-                        case TexturePattern.Brick:
-                            int row = y / 22;
-                            int offset = (row & 1) == 0 ? 0 : 32;
-                            if ((x + offset) % 64 < 3 || y % 22 < 3) c *= 0.38f;
-                            c *= 0.86f + 0.22f * Hash01(row, (x + offset) / 64, seed);
-                            break;
-                        case TexturePattern.Plaster:
-                            if (Hash01(x / 6, y / 6, seed) > 0.82f) c = Color.Lerp(c, new Color(0.24f, 0.22f, 0.19f), 0.38f);
-                            break;
-                        case TexturePattern.Corrugated:
-                            c *= 0.72f + ((x / 6) % 2) * 0.22f;
-                            if (y % 48 < 2) c *= 0.5f;
-                            break;
-                        case TexturePattern.Wood:
-                            c *= 0.74f + Mathf.Sin((x + seed) * 0.12f + Mathf.PerlinNoise(x * 0.03f, y * 0.03f) * 5f) * 0.16f;
-                            if (x % 52 < 3) c *= 0.45f;
-                            break;
-                        case TexturePattern.Fabric:
-                            if (x % 11 == 0 || y % 9 == 0) c *= 0.78f;
-                            break;
-                        case TexturePattern.ChainLink:
-                            bool wire = Mathf.Abs(((x + y) % 32) - 16) < 2 || Mathf.Abs(((x - y + 256) % 32) - 16) < 2;
-                            c = wire ? Color.Lerp(high, Color.white, 0.18f) : new Color(0.03f, 0.035f, 0.035f, 0.52f);
-                            break;
-                        case TexturePattern.Graffiti:
-                            c *= 0.45f;
-                            if (y > 72 && y < 165 && x > 24 && x < 230)
-                            {
-                                float band = Mathf.Sin((x + seed) * 0.09f) + Mathf.Cos(y * 0.08f);
-                                if (band > 0.25f) c = Color.Lerp(new Color(0.94f, 0.2f, 0.18f), high, Hash01(x, y, seed + 4));
-                            }
-                            if (x % 58 < 2 || y % 44 < 2) c *= 0.55f;
-                            break;
-                        case TexturePattern.Hazard:
-                            c = ((x + y) / 28) % 2 == 0 ? high : low;
-                            break;
-                    }
-
-                    c.a = 1f;
-                    tex.SetPixel(x, y, c);
+                    case TexturePattern.Asphalt:
+                        if ((x + seed * 7 + y / 9) % 97 < 2) c *= 0.46f;
+                        break;
+                    case TexturePattern.Concrete:
+                        if (x % 64 < 2 || y % 64 < 2) c *= 0.58f;
+                        break;
+                    case TexturePattern.Brick:
+                        int row = y / 22;
+                        int offset = (row & 1) == 0 ? 0 : 32;
+                        if ((x + offset) % 64 < 3 || y % 22 < 3) c *= 0.38f;
+                        break;
+                    case TexturePattern.Plaster:
+                        if (Hash01(x / 6, y / 6, seed) > 0.82f) c = Color.Lerp(c, new Color(0.24f, 0.22f, 0.19f), 0.38f);
+                        break;
+                    case TexturePattern.Corrugated:
+                        c *= 0.72f + ((x / 6) % 2) * 0.22f;
+                        break;
+                    case TexturePattern.Wood:
+                        c *= 0.74f + Mathf.Sin((x + seed) * 0.12f) * 0.16f;
+                        break;
+                    case TexturePattern.Fabric:
+                        if (x % 11 == 0 || y % 9 == 0) c *= 0.78f;
+                        break;
+                    case TexturePattern.ChainLink:
+                        bool wire = Mathf.Abs(((x + y) % 32) - 16) < 2 || Mathf.Abs(((x - y + 256) % 32) - 16) < 2;
+                        c = wire ? Color.Lerp(high, Color.white, 0.18f) : new Color(0.03f, 0.035f, 0.035f, 0.52f);
+                        break;
+                    case TexturePattern.Graffiti:
+                        c *= 0.45f;
+                        if (y > 72 && y < 165 && x > 24 && x < 230 && Mathf.Sin((x + seed) * 0.09f) > 0.25f)
+                            c = Color.Lerp(new Color(0.94f, 0.2f, 0.18f), high, Hash01(x, y, seed + 4));
+                        break;
+                    case TexturePattern.Hazard:
+                        c = ((x + y) / 28) % 2 == 0 ? high : low;
+                        break;
                 }
+                c.a = 1f;
+                tex.SetPixel(x, y, c);
             }
-
             tex.Apply();
             File.WriteAllBytes(path, tex.EncodeToPNG());
             Object.DestroyImmediate(tex);
             AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
-
             var importer = AssetImporter.GetAtPath(path) as TextureImporter;
             if (importer != null)
             {
@@ -224,7 +212,6 @@ namespace ArenaFps.Editor
                 importer.wrapMode = TextureWrapMode.Repeat;
                 importer.filterMode = FilterMode.Trilinear;
                 importer.mipmapEnabled = true;
-                importer.textureCompression = TextureImporterCompression.CompressedHQ;
                 importer.SaveAndReimport();
             }
         }
@@ -258,6 +245,7 @@ namespace ArenaFps.Editor
             Mats["Mat_ChainLink"] = MakeMat("Mat_ChainLink_AAA", Color.white, "AAA_ChainLink.png", new Vector2(3f, 3f), 0.2f, 0.25f);
             Mats["Mat_Rubber"] = MakeMat("Mat_Rubber_AAA", new Color(0.018f, 0.017f, 0.015f), null, Vector2.one, 0f, 0.08f);
             Mats["Mat_PaintWhite"] = MakeMat("Mat_RoadPaint_AAA", new Color(0.86f, 0.83f, 0.72f), null, Vector2.one, 0f, 0.18f);
+            Mats["Mat_Dirt"] = MakeMat("Mat_DirtPacked_AAA", new Color(0.42f, 0.34f, 0.22f), "AAA_DirtPacked.png", new Vector2(8f, 8f), 0f, 0.12f);
         }
 
         static Material MakeMat(string name, Color color, string textureName, Vector2 tiling, float metallic, float smoothness)
@@ -270,216 +258,403 @@ namespace ArenaFps.Editor
                 mat = new Material(shader) { name = name };
                 AssetDatabase.CreateAsset(mat, path);
             }
-
-            if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", color);
-            else mat.color = color;
+            if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", color); else mat.color = color;
             if (mat.HasProperty("_Metallic")) mat.SetFloat("_Metallic", metallic);
             if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", smoothness);
-
             Texture2D tex = null;
             if (!string.IsNullOrEmpty(textureName))
                 tex = AssetDatabase.LoadAssetAtPath<Texture2D>($"{TextureDir}/{textureName}");
             if (tex != null)
             {
-                if (mat.HasProperty("_BaseMap")) mat.SetTexture("_BaseMap", tex);
-                else mat.mainTexture = tex;
+                if (mat.HasProperty("_BaseMap")) mat.SetTexture("_BaseMap", tex); else mat.mainTexture = tex;
                 mat.mainTextureScale = tiling;
             }
-            else
-            {
-                if (mat.HasProperty("_BaseMap")) mat.SetTexture("_BaseMap", null);
-                else mat.mainTexture = null;
-            }
-
-            if (name.Contains("Glass") && mat.HasProperty("_AlphaClip"))
-                mat.SetFloat("_AlphaClip", 0f);
-
             EditorUtility.SetDirty(mat);
             return mat;
         }
+        #endregion
 
+        #region Ground + irregular shell
         static void BuildGroundAndShell(Transform parent)
         {
-            Box(parent, "Ground", new Vector3(0f, -0.06f, 0f), new Vector3(66f, 0.12f, 88f), "Mat_Asphalt");
+            Box(parent, "Ground", new Vector3(0f, -0.06f, 0f), new Vector3(MapWidth, 0.12f, MapLength), "Mat_Asphalt");
+            Box(parent, "Beach_Dirt", new Vector3(SX(-18f), 0.02f, SZ(-48f)), new Vector3(52f, 0.05f, 28f), "Mat_Dirt", false);
 
-            Box(parent, "Road_MidLane", new Vector3(0f, 0.015f, 0f), new Vector3(10f, 0.05f, 78f), "Mat_Asphalt", false);
-            Box(parent, "Road_WestLane", new Vector3(-21f, 0.02f, 0f), new Vector3(10f, 0.05f, 76f), "Mat_Asphalt", false);
-            Box(parent, "Road_EastLane", new Vector3(21f, 0.02f, 0f), new Vector3(10f, 0.05f, 76f), "Mat_Asphalt", false);
+            ShellSeg(parent, "Wall_West_S", new Vector3(-WallHalfX, WallHeight * 0.5f, SZ(-50f)), new Vector3(1.2f, WallHeight, 36f));
+            ShellSeg(parent, "Wall_West_Mid", new Vector3(-WallHalfX + 2.5f, WallHeight * 0.5f, 0f), new Vector3(1.2f, WallHeight, 42f));
+            ShellSeg(parent, "Wall_West_N", new Vector3(-WallHalfX, WallHeight * 0.5f, SZ(50f)), new Vector3(1.2f, WallHeight, 36f));
+            ShellSeg(parent, "Wall_East_S", new Vector3(WallHalfX, WallHeight * 0.5f, SZ(-48f)), new Vector3(1.2f, WallHeight, 40f));
+            ShellSeg(parent, "Wall_East_Mid", new Vector3(WallHalfX - 3f, WallHeight * 0.5f, SZ(8f)), new Vector3(1.2f, WallHeight, 44f));
+            ShellSeg(parent, "Wall_East_N", new Vector3(WallHalfX, WallHeight * 0.5f, SZ(52f)), new Vector3(1.2f, WallHeight, 32f));
+            ShellSeg(parent, "Wall_South_W", new Vector3(SX(-28f), WallHeight * 0.5f, -WallHalfZ), new Vector3(40f, WallHeight, 1.2f));
+            ShellSeg(parent, "Wall_South_E", new Vector3(SX(28f), WallHeight * 0.5f, -WallHalfZ + 1.5f), new Vector3(40f, WallHeight, 1.2f));
+            ShellSeg(parent, "Wall_South_Mid", new Vector3(0f, WallHeight * 0.5f, -WallHalfZ - 1.2f), new Vector3(24f, WallHeight, 1.2f));
+            ShellSeg(parent, "Wall_North_W", new Vector3(SX(-28f), WallHeight * 0.5f, WallHalfZ), new Vector3(40f, WallHeight, 1.2f));
+            ShellSeg(parent, "Wall_North_E", new Vector3(SX(28f), WallHeight * 0.5f, WallHalfZ - 1.5f), new Vector3(40f, WallHeight, 1.2f));
+            ShellSeg(parent, "Wall_North_Mid", new Vector3(0f, WallHeight * 0.5f, WallHalfZ + 1.2f), new Vector3(24f, WallHeight, 1.2f));
+            ShellSeg(parent, "Wall_Corner_SW", new Vector3(-WallHalfX + 1f, WallHeight * 0.5f, -WallHalfZ + 1f), new Vector3(4f, WallHeight, 4f));
+            ShellSeg(parent, "Wall_Corner_SE", new Vector3(WallHalfX - 1f, WallHeight * 0.5f, -WallHalfZ + 2f), new Vector3(4f, WallHeight, 4f));
+            ShellSeg(parent, "Wall_Corner_NW", new Vector3(-WallHalfX + 1f, WallHeight * 0.5f, WallHalfZ - 1f), new Vector3(4f, WallHeight, 4f));
+            ShellSeg(parent, "Wall_Corner_NE", new Vector3(WallHalfX - 1f, WallHeight * 0.5f, WallHalfZ - 2f), new Vector3(4f, WallHeight, 4f));
 
-            for (int z = -34; z <= 34; z += 8)
+            for (float z = -60f; z <= 60f; z += 14f)
             {
-                Box(parent, $"RoadStripe_Mid_{z}", new Vector3(0f, 0.08f, z), new Vector3(0.28f, 0.025f, 3.6f), "Mat_PaintWhite", false);
-                Box(parent, $"RoadStripe_West_{z}", new Vector3(-21f, 0.08f, z), new Vector3(0.24f, 0.025f, 3.2f), "Mat_PaintWhite", false);
-                Box(parent, $"RoadStripe_East_{z}", new Vector3(21f, 0.08f, z), new Vector3(0.24f, 0.025f, 3.2f), "Mat_PaintWhite", false);
-            }
-
-            for (int z = -38; z <= 38; z += 9)
-            {
-                Box(parent, $"Sidewalk_W_{z}", new Vector3(-11f, 0.08f, z), new Vector3(2.4f, 0.12f, 5.8f), "Mat_Concrete", false);
-                Box(parent, $"Sidewalk_E_{z}", new Vector3(11f, 0.08f, z), new Vector3(2.4f, 0.12f, 5.8f), "Mat_Concrete", false);
-            }
-
-            Wall(parent, "Wall_West", new Vector3(-32.5f, 4.2f, 0f), new Vector3(1f, 8.4f, 88f));
-            Wall(parent, "Wall_East", new Vector3(32.5f, 4.2f, 0f), new Vector3(1f, 8.4f, 88f));
-            Wall(parent, "Wall_South", new Vector3(0f, 4.2f, -44.5f), new Vector3(66f, 8.4f, 1f));
-            Wall(parent, "Wall_North", new Vector3(0f, 4.2f, 44.5f), new Vector3(66f, 8.4f, 1f));
-
-            for (int x = -28; x <= 28; x += 7)
-            {
-                Box(parent, $"Wall_South_Panel_{x}", new Vector3(x, 4.6f, -43.93f), new Vector3(4.6f, 5.8f, 0.08f), "Mat_Plaster", false);
-                Box(parent, $"Wall_North_Panel_{x}", new Vector3(x, 4.6f, 43.93f), new Vector3(4.6f, 5.8f, 0.08f), "Mat_Plaster", false);
+                Box(parent, $"WallPanel_W_{z:0}", new Vector3(-WallHalfX + 0.7f, 4f, SZ(z * 0.82f)), new Vector3(0.12f, 5.5f, 5f), "Mat_Plaster", false);
+                Box(parent, $"WallPanel_E_{z:0}", new Vector3(WallHalfX - 0.7f, 4f, SZ(z * 0.82f)), new Vector3(0.12f, 5.5f, 5f), "Mat_Plaster", false);
             }
         }
 
-        static void Wall(Transform parent, string name, Vector3 center, Vector3 size)
+        static void ShellSeg(Transform parent, string name, Vector3 center, Vector3 size)
         {
             Box(parent, name, center, size, "Mat_Brick");
-            Box(parent, name + "_Cap", center + Vector3.up * (size.y * 0.5f + 0.18f), new Vector3(size.x + 0.35f, 0.36f, size.z + 0.35f), "Mat_Concrete");
+            Box(parent, name + "_Cap", center + Vector3.up * (size.y * 0.5f + 0.18f),
+                new Vector3(size.x + 0.35f, 0.36f, size.z + 0.35f), "Mat_Concrete", false);
+        }
+        #endregion
+
+        #region Structures
+        static void BuildOverflowStructures(Transform parent)
+        {
+            Building(parent, "Bldg_Bank", P(-6f, 2f), new Vector3(14f, 7.5f, 16f), "Mat_Concrete", FacadeSide.South, -28f, "Mat_Plaster");
+            Building(parent, "Bldg_Shoes", P(8f, 6f), new Vector3(8f, 8f, 8f), "Mat_Brick", FacadeSide.West);
+            Building(parent, "Bldg_Baskets", P(14f, 28f), new Vector3(10f, 7f, 10f), "Mat_Brick", FacadeSide.West);
+            Building(parent, "Bldg_Electronics", P(22f, 46f), new Vector3(12f, 6.5f, 10f), "Mat_Plaster", FacadeSide.South);
+            Building(parent, "Bldg_Spices", P(18f, 14f), new Vector3(8f, 4.5f, 8f), "Mat_Plaster", FacadeSide.West);
+            Building(parent, "Bldg_Deli", P(16f, -2f), new Vector3(9f, 5.5f, 9f), "Mat_Brick", FacadeSide.West);
+            Building(parent, "Bldg_Construction", P(-10f, -18f), new Vector3(16f, 9f, 14f), "Mat_Concrete", FacadeSide.East);
+            Building(parent, "Bldg_FruitShed", P(-22f, -34f), new Vector3(8f, 3.5f, 6f), "Mat_Wood", FacadeSide.East);
+            Building(parent, "Bldg_StallsWest", P(-30f, 8f), new Vector3(6f, 3f, 10f), "Mat_Wood", FacadeSide.East);
+            Building(parent, "Bldg_GlassCurve", P(6f, -36f), new Vector3(12f, 10f, 8f), "Mat_Concrete", FacadeSide.North, 15f, "Mat_Glass");
+            Building(parent, "Bldg_ShopRow_E1", P(38f, -12f), new Vector3(8f, 6f, 14f), "Mat_Brick", FacadeSide.West);
+            Building(parent, "Bldg_ShopRow_E2", P(36f, 8f), new Vector3(8f, 7f, 12f), "Mat_Brick", FacadeSide.West);
+            Building(parent, "Bldg_ShopRow_E3", P(34f, 30f), new Vector3(8f, 6.5f, 12f), "Mat_Plaster", FacadeSide.West);
+            Building(parent, "Bldg_WestBlock_S", P(-40f, -40f), new Vector3(10f, 6f, 12f), "Mat_Concrete", FacadeSide.East);
+            Building(parent, "Bldg_WestBlock_N", P(-40f, 40f), new Vector3(10f, 6.5f, 12f), "Mat_Concrete", FacadeSide.East);
+            Building(parent, "Bldg_BlueSpawnHall", P(0f, -56f), new Vector3(20f, 5f, 8f), "Mat_Concrete", FacadeSide.North, 0f, "Mat_Blue");
+            Building(parent, "Bldg_RedSpawnHall", P(0f, 56f), new Vector3(20f, 5f, 8f), "Mat_Concrete", FacadeSide.South, 0f, "Mat_Red");
+            Building(parent, "Bldg_TopBottom", P(10f, -10f), new Vector3(6f, 7.5f, 6f), "Mat_Brick", FacadeSide.West);
+            Building(parent, "Bldg_MarketAnnex_S", P(28f, -24f), new Vector3(7f, 5f, 8f), "Mat_Plaster", FacadeSide.West, 12f);
+            Building(parent, "Bldg_MarketAnnex_N", P(24f, 38f), new Vector3(7f, 5.5f, 7f), "Mat_Brick", FacadeSide.West, -10f);
+            Building(parent, "Bldg_WestAnnex_Mid", P(-38f, 0f), new Vector3(8f, 5.5f, 10f), "Mat_Plaster", FacadeSide.East, 8f);
+            Building(parent, "Bldg_PlazaKiosk_N", P(-8f, 36f), new Vector3(5f, 3.5f, 5f), "Mat_Wood", FacadeSide.South);
+            Building(parent, "Bldg_PlazaKiosk_S", P(8f, -28f), new Vector3(5f, 3.2f, 5f), "Mat_Wood", FacadeSide.North);
+
+            Cylinder(parent, "Bldg_FountainRing", P(-34f, 0.6f, -6f), 8f, 1.2f, "Mat_Concrete");
+            Cylinder(parent, "Fountain_Inner", P(-34f, 0.35f, -6f), 5.2f, 0.7f, "Mat_Dirt", Axis.Y, false);
+
+            BuildBoat(parent, P(28f, -42f), -35f);
+
+            BuildVehicle(parent, "Prop_MidVan", P(-1f, -4f), new Vector3(2.4f, 2.2f, 5.5f), 8f, "Mat_Metal");
+            BuildVehicle(parent, "Prop_MidSUV", P(5f, 8f), new Vector3(2.2f, 2f, 4.8f), -15f, "Mat_PaintWhite");
+            BuildVehicle(parent, "Prop_MidContainer", P(1f, 2f), new Vector3(2.5f, 2.6f, 6f), 5f, "Mat_Metal");
+            BuildVehicle(parent, "Prop_BlueMainCar", P(-3f, -38f), new Vector3(2.3f, 1.8f, 4.6f), 70f, "Mat_Metal");
+            BuildVehicle(parent, "Prop_BlueMainCar2", P(6f, -42f), new Vector3(2.2f, 1.7f, 4.4f), -20f, "Mat_Hazard");
+            BuildVehicle(parent, "Prop_RedMainCar", P(2f, 38f), new Vector3(2.3f, 1.8f, 4.6f), 110f, "Mat_Metal");
+            BuildVehicle(parent, "Prop_BoatCar", P(22f, -48f), new Vector3(2.2f, 1.6f, 4.2f), -50f, "Mat_Metal");
+            BuildVehicle(parent, "Prop_BeachCar", P(-18f, -50f), new Vector3(2.4f, 1.7f, 4.5f), 25f, "Mat_Plaster");
+
+            Cylinder(parent, "Prop_UtilityPole_Main", P(-2f, 4.5f, -10f), 0.6f, 9f, "Mat_Wood");
+            foreach (var pole in new[] { P(-20f, 20f), P(18f, -24f), P(8f, 36f), P(-28f, -40f), P(30f, 12f), P(-12f, -8f), P(14f, 20f) })
+                Cylinder(parent, $"Prop_UtilityPole_{pole.x:0}_{pole.z:0}", pole + Vector3.up * 4.5f, 0.5f, 9f, "Mat_Wood");
         }
 
-        static void BuildIterationOneLayout(Transform parent)
+        static void BuildBoat(Transform parent, Vector3 ground, float yaw)
         {
-            // Strong lane reads: west alley, contested mid street, east market lane.
-            Building(parent, "PB_Building_West_South_Apartments", new Vector3(-14.5f, 0f, -27f), new Vector3(9f, 7.2f, 14f), "Mat_Brick", FacadeSide.East);
-            Building(parent, "PB_Building_West_Mid_PrintShop", new Vector3(-15.8f, 0f, -5f), new Vector3(8.4f, 8.7f, 15.5f), "Mat_Plaster", FacadeSide.East);
-            Building(parent, "PB_Building_West_North_Hotel", new Vector3(-14.5f, 0f, 21.5f), new Vector3(10.5f, 6.4f, 16f), "Mat_Brick", FacadeSide.East);
-
-            Building(parent, "PB_Building_East_South_Market", new Vector3(14.8f, 0f, -23f), new Vector3(10.8f, 6.1f, 17f), "Mat_Plaster", FacadeSide.West);
-            Building(parent, "PB_Building_East_Mid_Offices", new Vector3(15.6f, 0f, 2f), new Vector3(8.6f, 9.8f, 17f), "Mat_Brick", FacadeSide.West);
-            Building(parent, "PB_Building_East_North_Laundry", new Vector3(15.2f, 0f, 27f), new Vector3(10f, 6.8f, 13f), "Mat_Plaster", FacadeSide.West);
-
-            Building(parent, "PB_Building_Mid_SW_Cafe", new Vector3(-5.8f, 0f, -14.5f), new Vector3(6.1f, 5.4f, 8f), "Mat_Plaster", FacadeSide.North);
-            Building(parent, "PB_Building_Mid_SE_Pawn", new Vector3(6f, 0f, -12.5f), new Vector3(5.7f, 5.8f, 7f), "Mat_Brick", FacadeSide.North);
-            Building(parent, "PB_Building_Mid_NW_Clinic", new Vector3(-6.2f, 0f, 13f), new Vector3(6f, 5.6f, 8.5f), "Mat_Brick", FacadeSide.South);
-            Building(parent, "PB_Building_Mid_NE_Pharmacy", new Vector3(6.2f, 0f, 14f), new Vector3(5.8f, 6.4f, 8f), "Mat_Plaster", FacadeSide.South);
-
-            // Blue and Red spawn bases remain readable from mid.
-            Building(parent, "PB_BlueSpawn_CommandPost", new Vector3(0f, 0f, -37f), new Vector3(18f, 6.3f, 7.5f), "Mat_Concrete", FacadeSide.North, "Mat_Blue");
-            Building(parent, "PB_RedSpawn_CommandPost", new Vector3(0f, 0f, 37f), new Vector3(18f, 6.3f, 7.5f), "Mat_Concrete", FacadeSide.South, "Mat_Red");
-
-            Box(parent, "Overlook_West_Balcony", new Vector3(-8.6f, 4.4f, -1.5f), new Vector3(5.4f, 0.7f, 9.5f), "Mat_Concrete");
-            Box(parent, "Overlook_East_Balcony", new Vector3(8.6f, 4.4f, 1.5f), new Vector3(5.4f, 0.7f, 9.5f), "Mat_Concrete");
-            StairStack(parent, "Stairs_West_Overlook", new Vector3(-10.5f, 0.18f, -8.5f), 6, 0.75f, 2.8f, 1.0f, 0f);
-            StairStack(parent, "Stairs_East_Overlook", new Vector3(10.5f, 0.18f, 8.5f), 6, 0.75f, 2.8f, -1.0f, 180f);
-
-            Box(parent, "Mid_FountainBase", new Vector3(0f, 0.35f, 0f), new Vector3(6.5f, 0.7f, 6.5f), "Mat_Concrete");
-            Cylinder(parent, "Mid_FountainColumn", new Vector3(0f, 1.2f, 0f), 0.9f, 1.8f, "Mat_Concrete");
-            Cylinder(parent, "Mid_FountainRim", new Vector3(0f, 0.85f, 0f), 3.5f, 0.32f, "Mat_Concrete");
-            Box(parent, "Mid_Kiosk", new Vector3(-3.6f, 1.4f, -4.9f), new Vector3(3.7f, 2.8f, 3f), "Mat_Plaster");
-            Box(parent, "Mid_Kiosk_Roof", new Vector3(-3.6f, 3.0f, -4.9f), new Vector3(4.4f, 0.35f, 3.6f), "Mat_Hazard", false);
-
-            BuildAbandonedBus(parent, new Vector3(2.6f, 1.25f, 5.7f), 12f);
+            var root = new GameObject("Prop_Boat");
+            root.transform.SetParent(parent, true);
+            root.transform.position = ground;
+            root.transform.rotation = Quaternion.Euler(0f, yaw, 0f);
+            SetStatic(root);
+            Box(root.transform, "Hull", new Vector3(0f, 1.6f, 0f), new Vector3(18f, 3.2f, 7f), "Mat_Wood");
+            Box(root.transform, "Deck", new Vector3(0f, 3.3f, 0f), new Vector3(16f, 0.25f, 5.5f), "Mat_Wood");
+            Box(root.transform, "Cabin", new Vector3(-4f, 4.2f, 0f), new Vector3(5f, 2f, 4f), "Mat_Metal");
+            Box(root.transform, "Ramp", new Vector3(7f, 1.2f, 2.5f), new Vector3(4f, 0.35f, 2f), "Mat_Wood");
         }
 
-        static void BuildIterationTwoSilhouetteAndTrim(Transform parent)
+        static void BuildVehicle(Transform parent, string name, Vector3 ground, Vector3 size, float yaw, string mat)
         {
-            // Rooftop silhouettes, trim passes, wires, water tanks, and readable lane signage.
-            RoofKit(parent, new Vector3(-15f, 7.7f, -27f), "WestSouth");
-            RoofKit(parent, new Vector3(-16f, 9.2f, -5f), "WestMid");
-            RoofKit(parent, new Vector3(16f, 10.3f, 2f), "EastMid");
-            RoofKit(parent, new Vector3(15f, 7.2f, 27f), "EastNorth");
+            var root = new GameObject(name);
+            root.transform.SetParent(parent, true);
+            root.transform.position = ground;
+            root.transform.rotation = Quaternion.Euler(0f, yaw, 0f);
+            SetStatic(root);
+            Box(root.transform, "Body", new Vector3(0f, size.y * 0.5f, 0f), size, mat);
+            Box(root.transform, "Cabin", new Vector3(0f, size.y * 0.75f, size.z * 0.05f),
+                new Vector3(size.x * 0.9f, size.y * 0.55f, size.z * 0.45f), "Mat_Glass", false);
+            Cylinder(root.transform, "Wheel_FL", new Vector3(-size.x * 0.4f, 0.35f, size.z * 0.3f), 0.7f, 0.28f, "Mat_Rubber", Axis.X);
+            Cylinder(root.transform, "Wheel_FR", new Vector3(size.x * 0.4f, 0.35f, size.z * 0.3f), 0.7f, 0.28f, "Mat_Rubber", Axis.X);
+            Cylinder(root.transform, "Wheel_RL", new Vector3(-size.x * 0.4f, 0.35f, -size.z * 0.3f), 0.7f, 0.28f, "Mat_Rubber", Axis.X);
+            Cylinder(root.transform, "Wheel_RR", new Vector3(size.x * 0.4f, 0.35f, -size.z * 0.3f), 0.7f, 0.28f, "Mat_Rubber", Axis.X);
+        }
+        #endregion
 
-            Billboard(parent, "Billboard_Mid_BrokenHotel", new Vector3(-7.2f, 8.25f, 4.6f), new Vector3(7.2f, 2.5f, 0.24f), 18f);
-            Billboard(parent, "Billboard_East_Market", new Vector3(10.6f, 7.9f, -10.5f), new Vector3(6.4f, 2.2f, 0.24f), -90f);
-            Billboard(parent, "Billboard_West_Laundry", new Vector3(-10.7f, 6.7f, 18f), new Vector3(6.2f, 2.1f, 0.24f), 90f);
+        #region Dogleg lanes + connectors
+        static void BuildDoglegLanes(Transform parent)
+        {
+            RoadSeg(parent, "Road_A1", P(-28f, -58f), P(-34f, -28f), 8f);
+            RoadSeg(parent, "Road_A2", P(-34f, -28f), P(-36f, -2f), 7f);
+            RoadSeg(parent, "Road_A3", P(-36f, -2f), P(-30f, 22f), 6f);
+            RoadSeg(parent, "Road_A4", P(-30f, 22f), P(-26f, 56f), 8f);
 
-            for (int z = -32; z <= 32; z += 8)
+            RoadSeg(parent, "Road_B1", P(0f, -58f), P(-4f, -30f), 10f);
+            RoadSeg(parent, "Road_B2", P(-4f, -30f), P(2f, -8f), 9f);
+            RoadSeg(parent, "Road_B3", P(2f, -8f), P(-2f, 10f), 9f);
+            RoadSeg(parent, "Road_B4", P(-2f, 10f), P(4f, 32f), 9f);
+            RoadSeg(parent, "Road_B5", P(4f, 32f), P(0f, 58f), 10f);
+
+            RoadSeg(parent, "Road_C1", P(30f, -58f), P(34f, -36f), 5f);
+            RoadSeg(parent, "Road_C2", P(34f, -36f), P(28f, -18f), 4.5f);
+            RoadSeg(parent, "Road_C3", P(28f, -18f), P(32f, 2f), 4f);
+            RoadSeg(parent, "Road_C4", P(32f, 2f), P(26f, 24f), 4f);
+            RoadSeg(parent, "Road_C5", P(26f, 24f), P(30f, 56f), 5f);
+
+            RoadSeg(parent, "Conn_X1_BlueHub", P(-30f, -50f), P(30f, -50f), 8f);
+            RoadSeg(parent, "Conn_X2_BeachCut", P(-16f, -38f), P(-4f, -36f), 4f);
+            RoadSeg(parent, "Conn_X3_BoatMain", P(14f, -36f), P(4f, -34f), 4.5f);
+            RoadSeg(parent, "Conn_X4_Construction", P(-14f, -18f), P(-4f, -16f), 3.5f);
+            RoadSeg(parent, "Conn_X6_BankThrough", P(-14f, 0f), P(2f, 2f), 3f);
+            RoadSeg(parent, "Conn_X7_VaultAlley", P(-14f, 0f), P(-30f, 2f), 3f);
+            RoadSeg(parent, "Conn_X9_MidSouth", P(2f, -8f), P(14f, -6f), 3.5f);
+            RoadSeg(parent, "Conn_X10_Spices", P(4f, 14f), P(22f, 14f), 3f);
+            RoadSeg(parent, "Conn_X11_Baskets", P(2f, 26f), P(14f, 26f), 3f);
+            RoadSeg(parent, "Conn_X13_Plaza", P(-30f, 40f), P(30f, 40f), 10f);
+            RoadSeg(parent, "Conn_X14_RedHub", P(-30f, 52f), P(30f, 52f), 8f);
+            RoadSeg(parent, "Conn_X15_StallsMain", P(-18f, 10f), P(-4f, 10f), 3.5f);
+            RoadSeg(parent, "Conn_X16_DeliSpices", P(24f, -2f), P(24f, 14f), 3f);
+            RoadSeg(parent, "Conn_X17_FruitDirt", P(-16f, -28f), P(-12f, -18f), 4f);
+
+            for (int i = -5; i <= 5; i++)
             {
-                LampPost(parent, new Vector3(-27.2f, 0f, z), 0f);
-                LampPost(parent, new Vector3(27.2f, 0f, z + 4), 180f);
+                float z = i * 10f;
+                float xBias = Mathf.Sin(i * 0.7f) * 3f;
+                Box(parent, $"Sidewalk_Mid_W_{i}", P(-6f + xBias * 0.3f, 0.08f, z), new Vector3(2.2f, 0.1f, 4f), "Mat_Concrete", false);
+                Box(parent, $"Sidewalk_Mid_E_{i}", P(6f + xBias * 0.3f, 0.08f, z), new Vector3(2.2f, 0.1f, 4f), "Mat_Concrete", false);
             }
-
-            Wire(parent, "UtilityWire_West_A", new Vector3(-14.2f, 7.2f, -31f), new Vector3(-13.5f, 7.9f, 31f));
-            Wire(parent, "UtilityWire_East_A", new Vector3(14.2f, 7.4f, -31f), new Vector3(13.4f, 8.3f, 31f));
-            Wire(parent, "UtilityWire_Mid_Cross", new Vector3(-9.8f, 6.3f, -4f), new Vector3(9.8f, 7.1f, 5f));
-
-            Fence(parent, "Fence_WestBacklot", new Vector3(-28.6f, 1.4f, -8f), 18f, true);
-            Fence(parent, "Fence_EastBacklot", new Vector3(28.6f, 1.4f, 10f), 18f, true);
-            Fence(parent, "Fence_BlueSpawn", new Vector3(-10f, 1.4f, -33f), 10f, false);
-            Fence(parent, "Fence_RedSpawn", new Vector3(10f, 1.4f, 33f), 10f, false);
         }
 
-        static void BuildIterationThreePropsAndStory(Transform parent)
+        static void RoadSeg(Transform parent, string name, Vector3 a, Vector3 b, float width)
         {
-            // Combat cover first: keep these names for SpawnArenaCombat.
-            CrateStack(parent, "Cover_A", new Vector3(-12.2f, 0f, -18f), 3, 2, "Mat_Wood");
-            Dumpster(parent, "Cover_B", new Vector3(12.2f, 0f, -16f), 90f);
-            ConcreteBarrier(parent, "Cover_C", new Vector3(0f, 0f, 9.2f), 0f, 5);
+            var mid = (a + b) * 0.5f;
+            mid.y = 0.02f;
+            var dir = b - a; dir.y = 0f;
+            float len = dir.magnitude;
+            if (len < 0.5f) return;
+            // Collider kept so ground queries / pale-pixel raycasts hit the road mesh.
+            // No center stripe — later mat passes matched StartsWith("Road_"/"Conn_") and
+            // turned paint stripes into pale sand cards (CRITIQUE_01 #1).
+            var go = Box(parent, name, mid, new Vector3(width, 0.04f, len), "Mat_Asphalt", true);
+            go.transform.rotation = Quaternion.LookRotation(dir.normalized, Vector3.up);
+        }
+        #endregion
 
-            SandbagWall(parent, "Cover_Blue_Sandbags", new Vector3(0f, 0f, -27.2f), 8, 0f);
-            SandbagWall(parent, "Cover_Red_Sandbags", new Vector3(0f, 0f, 27.2f), 8, 180f);
-            SandbagWall(parent, "Cover_West_Sandbags", new Vector3(-23.5f, 0f, 3f), 6, 90f);
-            SandbagWall(parent, "Cover_East_Sandbags", new Vector3(23.5f, 0f, -3f), 6, -90f);
+        #region Verticality
+        static void BuildVerticality(Transform parent)
+        {
+            StairStack(parent, "Stairs_Shoes_S1", P(11f, 0.1f, 4f), 8, 0.375f, 2.5f, 1f, 0f);
+            StairStack(parent, "Stairs_Baskets_S2", P(12f, 0.1f, 26f), 8, 0.375f, 2.5f, 1f, 0f);
+            StairStack(parent, "Stairs_Electronics_S3", P(20f, 0.1f, 48f), 8, 0.375f, 2.5f, -1f, 180f);
+            StairStack(parent, "Stairs_Bank_S4", P(-4f, 0.1f, 0f), 8, 0.375f, 2.5f, 1f, 0f);
+            StairStack(parent, "Stairs_TopBottom_S5", P(9f, 0.1f, -10f), 8, 0.375f, 2.2f, 1f, 0f);
+            StairStack(parent, "Stairs_Construction_S6", P(-12f, 0.1f, -22f), 8, 0.375f, 2f, 1f, 0f);
+            StairStack(parent, "Stairs_Construction_S7", P(-8f, 3.1f, -20f), 8, 0.375f, 2f, 1f, 0f);
 
-            var propPositions = new[]
+            Box(parent, "Bal_Shoes_W", P(4f, 4.5f, 6f), new Vector3(1f, 0.25f, 4f), "Mat_Concrete");
+            Box(parent, "Bal_Baskets_SW", P(10f, 4f, 24f), new Vector3(1f, 0.25f, 3f), "Mat_Concrete");
+            Box(parent, "Bal_Electronics_S", P(22f, 3.8f, 42f), new Vector3(1f, 0.25f, 4f), "Mat_Concrete");
+            Box(parent, "Bal_Deli_W", P(12f, 3.5f, -2f), new Vector3(1f, 0.25f, 3f), "Mat_Concrete");
+            Box(parent, "Cat_Construction_E", P(-2f, 6f, -16f), new Vector3(6f, 0.25f, 3f), "Mat_Metal");
+            Box(parent, "Overlook_Bank_2F", P(-6f, 4.2f, 4f), new Vector3(6f, 0.25f, 5f), "Mat_Concrete");
+            Box(parent, "Overlook_Shoes_2F", P(8f, 4.5f, 6f), new Vector3(5f, 0.25f, 5f), "Mat_Concrete");
+            Box(parent, "Overlook_Baskets_2F", P(14f, 4f, 28f), new Vector3(6f, 0.25f, 5f), "Mat_Concrete");
+
+            Scaffold(parent, "Scaffold_Construction_A", P(-6f, -22f), 0f);
+            Scaffold(parent, "Scaffold_Construction_B", P(-14f, -14f), 90f);
+            Scaffold(parent, "Scaffold_Construction_C", P(-8f, -18f), 45f);
+            Box(parent, "Ladder_Boat_L2", P(30f, 1.25f, -40f), new Vector3(1f, 2.5f, 0.35f), "Mat_Metal");
+        }
+        #endregion
+
+        #region Cover density
+        static void BuildCoverAndDensity(Transform parent)
+        {
+            CrateStack(parent, "Cover_A", P(-12f, -18f), 3, 2, "Mat_Wood");
+            Dumpster(parent, "Cover_B", P(12f, -16f), 90f);
+            ConcreteBarrier(parent, "Cover_C", P(0f, 9f), 0f, 4);
+
+            float[] a3z = { -6f, -2f, 2f, 6f, 10f, 14f };
+            for (int i = 0; i < a3z.Length; i++)
+                CrateStack(parent, $"Cover_A3_Headglitch_{i}", new Vector3(SX(-33f + (i % 2) * 3f), 0f, SZ(a3z[i])), 1, 1, "Mat_Wood");
+
+            Rubble(parent, "Cover_RubblePile_A", P(-8f, -8f), new Vector3(4f, 1.4f, 3f));
+            Rubble(parent, "Cover_RubblePile_B", P(4f, 12f), new Vector3(3.5f, 1.3f, 3f));
+            ConcreteBarrier(parent, "Cover_Jersey_A", P(-3f, 16f), 15f, 2);
+            ConcreteBarrier(parent, "Cover_Jersey_B", P(3f, -20f), -10f, 2);
+            CrateStack(parent, "Cover_Plaza_0", P(0f, 40f), 2, 1, "Mat_Wood");
+            CrateStack(parent, "Cover_Plaza_W", P(-8f, 38f), 2, 1, "Mat_Wood");
+            CrateStack(parent, "Cover_Plaza_E", P(8f, 42f), 2, 1, "Mat_Wood");
+
+            SandbagWall(parent, "Cover_Blue_Sandbags", P(0f, -48f), 8, 0f);
+            SandbagWall(parent, "Cover_Red_Sandbags", P(0f, 48f), 8, 180f);
+            SandbagWall(parent, "Cover_West_Sandbags", P(-32f, 4f), 6, 90f);
+            SandbagWall(parent, "Cover_East_Sandbags", P(30f, -4f), 6, -90f);
+
+            var fill = new (float x, float z, int kind)[]
             {
-                new Vector3(-24f,0f,-24f), new Vector3(-24f,0f,-3f), new Vector3(-22f,0f,22f),
-                new Vector3(23f,0f,-25f), new Vector3(24f,0f,1f), new Vector3(22f,0f,22f),
-                new Vector3(-6f,0f,-5f), new Vector3(6.2f,0f,6.5f), new Vector3(-2.5f,0f,17f), new Vector3(2.5f,0f,-19f)
+                (-24f, -20f, 0), (-20f, -8f, 1), (-28f, 16f, 2), (-22f, 28f, 0),
+                (-16f, 18f, 1), (-10f, 22f, 2), (10f, 18f, 0), (18f, 4f, 1),
+                (20f, -14f, 2), (26f, -8f, 0), (28f, 16f, 1), (22f, 30f, 2),
+                (-4f, -22f, 0), (4f, -14f, 1), (-6f, 8f, 2), (8f, -4f, 0),
+                (0f, 22f, 1), (-14f, -44f, 2), (16f, -44f, 0), (-8f, 48f, 1),
+                (12f, 50f, 2), (32f, -28f, 0), (-34f, -24f, 1), (-34f, 28f, 2),
+                (4f, 28f, 0), (-2f, -32f, 1), (14f, 8f, 2), (-18f, 0f, 0),
+                (36f, 20f, 1), (-40f, 16f, 2), (0f, -12f, 0), (0f, 14f, 1),
             };
-
-            for (int i = 0; i < propPositions.Length; i++)
+            for (int i = 0; i < fill.Length; i++)
             {
-                if (i % 3 == 0) CrateStack(parent, $"Prop_CrateStack_{i}", propPositions[i], 2 + (i % 2), 1 + (i % 3), "Mat_Wood");
-                else if (i % 3 == 1) BarrelCluster(parent, $"Prop_BarrelCluster_{i}", propPositions[i]);
-                else PipeBundle(parent, $"Prop_PipeBundle_{i}", propPositions[i]);
+                var f = fill[i];
+                var pos = P(f.x, f.z);
+                if (f.kind == 0) CrateStack(parent, $"Prop_CrateFill_{i}", pos, 2, 1 + (i % 2), "Mat_Wood");
+                else if (f.kind == 1) BarrelCluster(parent, $"Prop_BarrelFill_{i}", pos);
+                else ConcreteBarrier(parent, $"Prop_BarrierFill_{i}", pos, i * 17f, 1 + (i % 2));
             }
 
-            Dumpster(parent, "Prop_Dumpster_West_Alley", new Vector3(-25.2f, 0f, 13.5f), 0f);
-            Dumpster(parent, "Prop_Dumpster_East_Alley", new Vector3(25.2f, 0f, -13.5f), 180f);
-            Scaffold(parent, "Prop_Scaffold_West", new Vector3(-20.5f, 0f, -8f), 0f);
-            Scaffold(parent, "Prop_Scaffold_East", new Vector3(20.5f, 0f, 8f), 180f);
-
-            for (int x = -6; x <= 6; x += 3)
+            for (int i = 0; i < 6; i++)
             {
-                Box(parent, $"Crosswalk_Blue_{x}", new Vector3(x, 0.1f, -31.5f), new Vector3(1.4f, 0.03f, 0.38f), "Mat_PaintWhite", false);
-                Box(parent, $"Crosswalk_Red_{x}", new Vector3(x, 0.1f, 31.5f), new Vector3(1.4f, 0.03f, 0.38f), "Mat_PaintWhite", false);
+                float z = -40f + i * 16f;
+                float x = (i % 2 == 0) ? -2.5f : 3f;
+                ConcreteBarrier(parent, $"Cover_Jersey_Main_{i}", P(x, z), i * 7f, 1);
             }
 
-            TeamBanner(parent, "Banner_Blue", new Vector3(0f, 6.8f, -33.1f), "BLUE", "Mat_Blue");
-            TeamBanner(parent, "Banner_Red", new Vector3(0f, 6.8f, 33.1f), "RED", "Mat_Red");
-
-            Decal(parent, "Graffiti_West_1", new Vector3(-10.25f, 2.3f, -4.5f), new Vector3(0.08f, 2f, 3.2f), "Mat_Graffiti");
-            Decal(parent, "Graffiti_East_1", new Vector3(10.25f, 2.4f, 8f), new Vector3(0.08f, 2.2f, 3.4f), "Mat_Graffiti");
-            Decal(parent, "Graffiti_Mid_Clinic", new Vector3(-2.95f, 2.2f, 8.7f), new Vector3(3f, 1.8f, 0.08f), "Mat_Graffiti");
+            CrateStack(parent, "Cover_Market_C2", P(31f, -27f), 1, 1, "Mat_Wood");
+            CrateStack(parent, "Cover_Market_C3", P(30f, -8f), 1, 1, "Mat_Wood");
+            CrateStack(parent, "Cover_Market_C4", P(29f, 12f), 1, 1, "Mat_Wood");
+            Dumpster(parent, "Prop_Dumpster_West", P(-28f, 14f), 0f);
+            Dumpster(parent, "Prop_Dumpster_East", P(28f, -12f), 180f);
+            Dumpster(parent, "Prop_Dumpster_MidS", P(8f, -6f), 90f);
+            Dumpster(parent, "Prop_Dumpster_MidN", P(-6f, 18f), -90f);
+            Rubble(parent, "Cover_Rubble_Beach", P(-20f, -44f), new Vector3(3.5f, 1.3f, 3f));
+            Rubble(parent, "Cover_Rubble_Construction", P(-16f, -24f), new Vector3(4f, 1.5f, 3.5f));
+            Rubble(parent, "Cover_Rubble_Plaza", P(4f, 36f), new Vector3(3f, 1.2f, 3f));
         }
 
+        static void Rubble(Transform parent, string name, Vector3 ground, Vector3 size)
+        {
+            var root = new GameObject(name);
+            root.transform.SetParent(parent, true);
+            root.transform.position = ground;
+            SetStatic(root);
+            Box(root.transform, "Chunk_A", new Vector3(0f, size.y * 0.35f, 0f), size * 0.7f, "Mat_Concrete");
+            Box(root.transform, "Chunk_B", new Vector3(size.x * 0.25f, size.y * 0.45f, size.z * 0.15f), size * 0.5f, "Mat_Brick");
+            Box(root.transform, "Chunk_C", new Vector3(-size.x * 0.2f, size.y * 0.25f, -size.z * 0.2f), size * 0.4f, "Mat_Concrete");
+        }
+        #endregion
+
+        #region Silhouette / dressing
+        static void BuildSilhouetteDressing(Transform parent)
+        {
+            RoofKit(parent, P(-10f, 9.2f, -18f), "Construction");
+            RoofKit(parent, P(-6f, 7.7f, 2f), "Bank");
+            RoofKit(parent, P(8f, 8.2f, 6f), "Shoes");
+            RoofKit(parent, P(14f, 7.2f, 28f), "Baskets");
+            RoofKit(parent, P(22f, 6.7f, 46f), "Electronics");
+            RoofKit(parent, P(38f, 6.2f, -12f), "ShopE1");
+            RoofKit(parent, P(36f, 7.2f, 8f), "ShopE2");
+
+            Billboard(parent, "Billboard_Market", P(12f, 8f, -8f), new Vector3(6.4f, 2.2f, 0.24f), -90f);
+            Billboard(parent, "Billboard_Fountain", P(-28f, 7f, 4f), new Vector3(5.5f, 2f, 0.24f), 90f);
+            Billboard(parent, "Billboard_Plaza", P(4f, 7.5f, 36f), new Vector3(7f, 2.4f, 0.24f), 0f);
+
+            Wire(parent, "Cable_Main_A", P(-9f, 6.5f, -8f), P(9f, 7f, 4f));
+            Wire(parent, "Cable_Main_B", P(-8f, 6.8f, 6f), P(10f, 7.2f, 16f));
+            Wire(parent, "Cable_Main_C", P(-6f, 7f, 20f), P(8f, 7.4f, 30f));
+            Wire(parent, "Cable_Main_D", P(-4f, 6.6f, -20f), P(6f, 7f, -10f));
+            Wire(parent, "Cable_Market_A", P(20f, 6f, -10f), P(32f, 6.5f, 4f));
+            Wire(parent, "Cable_Market_B", P(22f, 6.2f, 10f), P(30f, 6.8f, 24f));
+            Wire(parent, "Cable_Market_C", P(18f, 6.4f, 28f), P(28f, 7f, 40f));
+            Wire(parent, "Cable_West_A", P(-36f, 6f, -20f), P(-28f, 6.5f, 0f));
+            Wire(parent, "Cable_West_B", P(-34f, 6.2f, 8f), P(-26f, 6.8f, 28f));
+
+            for (float z = -60f; z <= 60f; z += 12f)
+            {
+                LampPost(parent, P(-44f, z), 0f);
+                LampPost(parent, P(44f, z + 4f), 180f);
+            }
+
+            Fence(parent, "Fence_WestBacklot", P(-46f, -8f), 22f, true);
+            Fence(parent, "Fence_EastBacklot", P(48f, 10f), 22f, true);
+            Fence(parent, "Fence_BlueSpawn", P(-12f, -58f), 14f, false);
+            Fence(parent, "Fence_RedSpawn", P(12f, 58f), 14f, false);
+
+            TeamBanner(parent, "Banner_Blue", P(0f, 6.5f, -56f), "BLUE", "Mat_Blue");
+            TeamBanner(parent, "Banner_Red", P(0f, 6.5f, 56f), "RED", "Mat_Red");
+
+            for (int i = 0; i < 14; i++)
+            {
+                float z = -40f + i * 6f;
+                Box(parent, $"Sign_Market_{i}", P(34f, 3.2f, z * 0.9f), new Vector3(0.12f, 1.2f, 2.8f),
+                    i % 3 == 0 ? "Mat_Hazard" : (i % 3 == 1 ? "Mat_Blue" : "Mat_Red"), false);
+                Box(parent, $"Sign_Main_{i}", new Vector3(SX((i % 2 == 0) ? -8f : 8f), 3.4f, SZ(z * 0.85f)),
+                    new Vector3(2.6f, 1.1f, 0.12f), i % 2 == 0 ? "Mat_Hazard" : "Mat_Blue", false);
+            }
+
+            for (int i = 0; i < 20; i++)
+            {
+                float x = (i % 2 == 0) ? -10f : 12f;
+                float z = -36f + i * 3.6f;
+                Box(parent, $"AC_Unit_{i}", P(x, 3.8f, z), new Vector3(0.9f, 0.7f, 0.55f), "Mat_Metal", false);
+            }
+        }
+        #endregion
+
+        #region Building helpers
         enum FacadeSide { East, West, North, South }
 
-        static void Building(Transform parent, string name, Vector3 centerBottom, Vector3 size, string bodyMat, FacadeSide mainSide, string accentMat = null)
+        static void Building(Transform parent, string name, Vector3 centerBottom, Vector3 size, string bodyMat,
+            FacadeSide mainSide, float yaw = 0f, string accentMat = null)
         {
-            var center = centerBottom + Vector3.up * (size.y * 0.5f);
-            Box(parent, name + "_PBMass", center, size, bodyMat);
-            Box(parent, name + "_RoofLedge", center + Vector3.up * (size.y * 0.5f + 0.18f), new Vector3(size.x + 0.58f, 0.36f, size.z + 0.58f), "Mat_Concrete");
-            Box(parent, name + "_Parapet_N", center + new Vector3(0f, size.y * 0.5f + 0.68f, size.z * 0.5f), new Vector3(size.x + 0.65f, 0.72f, 0.34f), "Mat_Trim");
-            Box(parent, name + "_Parapet_S", center + new Vector3(0f, size.y * 0.5f + 0.68f, -size.z * 0.5f), new Vector3(size.x + 0.65f, 0.72f, 0.34f), "Mat_Trim");
-            Box(parent, name + "_Parapet_E", center + new Vector3(size.x * 0.5f, size.y * 0.5f + 0.68f, 0f), new Vector3(0.34f, 0.72f, size.z + 0.65f), "Mat_Trim");
-            Box(parent, name + "_Parapet_W", center + new Vector3(-size.x * 0.5f, size.y * 0.5f + 0.68f, 0f), new Vector3(0.34f, 0.72f, size.z + 0.65f), "Mat_Trim");
+            var root = new GameObject(name);
+            root.transform.SetParent(parent, true);
+            root.transform.position = centerBottom;
+            root.transform.rotation = Quaternion.Euler(0f, yaw, 0f);
+            SetStatic(root);
 
-            AddHorizontalTrim(parent, name + "_TrimLower", center, size, 1.15f, "Mat_Trim");
-            AddHorizontalTrim(parent, name + "_TrimUpper", center, size, Mathf.Max(2.7f, size.y - 1.25f), "Mat_Concrete");
-            AddCornerPillars(parent, name, center, size);
-            BuildFacade(parent, name, center, size, mainSide, accentMat ?? "Mat_Trim");
+            var center = Vector3.up * (size.y * 0.5f);
+            Box(root.transform, name + "_Mass", center, size, bodyMat);
 
-            // Secondary faces add enough detail to stop side approaches reading as blank boxes.
+            Box(root.transform, name + "_RoofLedge", center + Vector3.up * (size.y * 0.5f + 0.18f),
+                new Vector3(size.x + 0.58f, 0.36f, size.z + 0.58f), "Mat_Concrete", false);
+            Box(root.transform, name + "_Parapet_N", center + new Vector3(0f, size.y * 0.5f + 0.68f, size.z * 0.5f),
+                new Vector3(size.x + 0.65f, 0.72f, 0.34f), "Mat_Trim", false);
+            Box(root.transform, name + "_Parapet_S", center + new Vector3(0f, size.y * 0.5f + 0.68f, -size.z * 0.5f),
+                new Vector3(size.x + 0.65f, 0.72f, 0.34f), "Mat_Trim", false);
+            Box(root.transform, name + "_Parapet_E", center + new Vector3(size.x * 0.5f, size.y * 0.5f + 0.68f, 0f),
+                new Vector3(0.34f, 0.72f, size.z + 0.65f), "Mat_Trim", false);
+            Box(root.transform, name + "_Parapet_W", center + new Vector3(-size.x * 0.5f, size.y * 0.5f + 0.68f, 0f),
+                new Vector3(0.34f, 0.72f, size.z + 0.65f), "Mat_Trim", false);
+
+            AddHorizontalTrim(root.transform, name + "_TrimLower", center, size, 1.15f, "Mat_Trim");
+            AddHorizontalTrim(root.transform, name + "_TrimUpper", center, size, Mathf.Max(2.7f, size.y - 1.25f), "Mat_Concrete");
+            AddCornerPillars(root.transform, name, center, size);
+            BuildFacade(root.transform, name, center, size, mainSide, accentMat ?? "Mat_Trim");
             if (mainSide is FacadeSide.East or FacadeSide.West)
             {
-                BuildFacade(parent, name + "_North", center, size, FacadeSide.North, accentMat ?? "Mat_Trim", false);
-                BuildFacade(parent, name + "_South", center, size, FacadeSide.South, accentMat ?? "Mat_Trim", false);
+                BuildFacade(root.transform, name + "_North", center, size, FacadeSide.North, accentMat ?? "Mat_Trim", false);
+                BuildFacade(root.transform, name + "_South", center, size, FacadeSide.South, accentMat ?? "Mat_Trim", false);
             }
             else
             {
-                BuildFacade(parent, name + "_East", center, size, FacadeSide.East, accentMat ?? "Mat_Trim", false);
-                BuildFacade(parent, name + "_West", center, size, FacadeSide.West, accentMat ?? "Mat_Trim", false);
+                BuildFacade(root.transform, name + "_East", center, size, FacadeSide.East, accentMat ?? "Mat_Trim", false);
+                BuildFacade(root.transform, name + "_West", center, size, FacadeSide.West, accentMat ?? "Mat_Trim", false);
             }
         }
 
         static void AddHorizontalTrim(Transform parent, string name, Vector3 center, Vector3 size, float y, string mat)
         {
-            Box(parent, name + "_N", new Vector3(center.x, y, center.z + size.z * 0.5f + 0.055f), new Vector3(size.x + 0.15f, 0.18f, 0.16f), mat, false);
-            Box(parent, name + "_S", new Vector3(center.x, y, center.z - size.z * 0.5f - 0.055f), new Vector3(size.x + 0.15f, 0.18f, 0.16f), mat, false);
-            Box(parent, name + "_E", new Vector3(center.x + size.x * 0.5f + 0.055f, y, center.z), new Vector3(0.16f, 0.18f, size.z + 0.15f), mat, false);
-            Box(parent, name + "_W", new Vector3(center.x - size.x * 0.5f - 0.055f, y, center.z), new Vector3(0.16f, 0.18f, size.z + 0.15f), mat, false);
+            bool collide = y <= HeadHeight;
+            Box(parent, name + "_N", new Vector3(center.x, y, center.z + size.z * 0.5f + 0.055f), new Vector3(size.x + 0.15f, 0.18f, 0.16f), mat, collide);
+            Box(parent, name + "_S", new Vector3(center.x, y, center.z - size.z * 0.5f - 0.055f), new Vector3(size.x + 0.15f, 0.18f, 0.16f), mat, collide);
+            Box(parent, name + "_E", new Vector3(center.x + size.x * 0.5f + 0.055f, y, center.z), new Vector3(0.16f, 0.18f, size.z + 0.15f), mat, collide);
+            Box(parent, name + "_W", new Vector3(center.x - size.x * 0.5f - 0.055f, y, center.z), new Vector3(0.16f, 0.18f, size.z + 0.15f), mat, collide);
         }
 
         static void AddCornerPillars(Transform parent, string name, Vector3 center, Vector3 size)
@@ -499,7 +674,6 @@ namespace ArenaFps.Editor
             int floors = Mathf.Clamp(Mathf.FloorToInt(size.y / 2.15f), 1, 4);
             float step = length / (columns + 1);
             float start = -length * 0.5f + step;
-
             for (int f = 0; f < floors; f++)
             {
                 float y = 2.25f + f * 1.85f;
@@ -508,20 +682,18 @@ namespace ArenaFps.Editor
                 {
                     float along = start + c * step;
                     FramePanel(parent, $"{name}_Win_{side}_{f}_{c}", center, size, side, along, y, 1.25f, 1.12f, "Mat_Glass", "Mat_Trim", false);
-                    Box(parent, $"{name}_InsetShadow_{side}_{f}_{c}", PanelCenter(center, size, side, along, y) - PanelNormal(side) * 0.015f, PanelSize(side, 1.35f, 1.22f), "Mat_Trim", false);
                 }
             }
-
             if (includeDoor)
             {
-                FramePanel(parent, $"{name}_DoorRecess_{side}", center, size, side, 0f, 1.05f, 1.75f, 2.1f, "Mat_Trim", accentMat, true);
+                FramePanel(parent, $"{name}_DoorRecess_{side}", center, size, side, 0f, 1.05f, 1.75f, 2.1f, "Mat_Trim", accentMat, false);
                 var awningCenter = PanelCenter(center, size, side, 0f, 2.38f) + PanelNormal(side) * 0.18f;
-                var awningSize = PanelSize(side, 2.8f, 0.28f);
-                Box(parent, $"{name}_DoorAwning_{side}", awningCenter, awningSize, accentMat, false);
+                Box(parent, $"{name}_DoorAwning_{side}", awningCenter, PanelSize(side, 2.8f, 0.28f), accentMat, false);
             }
         }
 
-        static void FramePanel(Transform parent, string name, Vector3 buildingCenter, Vector3 buildingSize, FacadeSide side, float along, float y, float width, float height, string fillMat, string frameMat, bool collider)
+        static void FramePanel(Transform parent, string name, Vector3 buildingCenter, Vector3 buildingSize, FacadeSide side,
+            float along, float y, float width, float height, string fillMat, string frameMat, bool collider)
         {
             Box(parent, name + "_Fill", PanelCenter(buildingCenter, buildingSize, side, along, y), PanelSize(side, width, height), fillMat, collider);
             float t = 0.14f;
@@ -539,52 +711,28 @@ namespace ArenaFps.Editor
             _ => Vector3.back,
         };
 
-        static Vector3 PanelCenter(Vector3 buildingCenter, Vector3 buildingSize, FacadeSide side, float along, float y)
+        static Vector3 PanelCenter(Vector3 buildingCenter, Vector3 buildingSize, FacadeSide side, float along, float y) => side switch
         {
-            return side switch
-            {
-                FacadeSide.East => new Vector3(buildingCenter.x + buildingSize.x * 0.5f + 0.055f, y, buildingCenter.z + along),
-                FacadeSide.West => new Vector3(buildingCenter.x - buildingSize.x * 0.5f - 0.055f, y, buildingCenter.z + along),
-                FacadeSide.North => new Vector3(buildingCenter.x + along, y, buildingCenter.z + buildingSize.z * 0.5f + 0.055f),
-                _ => new Vector3(buildingCenter.x + along, y, buildingCenter.z - buildingSize.z * 0.5f - 0.055f),
-            };
-        }
+            FacadeSide.East => new Vector3(buildingCenter.x + buildingSize.x * 0.5f + 0.055f, y, buildingCenter.z + along),
+            FacadeSide.West => new Vector3(buildingCenter.x - buildingSize.x * 0.5f - 0.055f, y, buildingCenter.z + along),
+            FacadeSide.North => new Vector3(buildingCenter.x + along, y, buildingCenter.z + buildingSize.z * 0.5f + 0.055f),
+            _ => new Vector3(buildingCenter.x + along, y, buildingCenter.z - buildingSize.z * 0.5f - 0.055f),
+        };
 
-        static Vector3 PanelSize(FacadeSide side, float width, float height)
-        {
-            return side is FacadeSide.East or FacadeSide.West
+        static Vector3 PanelSize(FacadeSide side, float width, float height) =>
+            side is FacadeSide.East or FacadeSide.West
                 ? new Vector3(0.09f, height, width)
                 : new Vector3(width, height, 0.09f);
-        }
+        #endregion
 
+        #region Prop helpers
         static void RoofKit(Transform parent, Vector3 center, string suffix)
         {
-            Box(parent, $"Roof_HVAC_{suffix}", center + new Vector3(1.1f, 0.32f, -0.6f), new Vector3(2f, 0.64f, 1.4f), "Mat_Metal");
-            Box(parent, $"Roof_Duct_{suffix}", center + new Vector3(-1.2f, 0.18f, 0.75f), new Vector3(2.8f, 0.36f, 0.48f), "Mat_Metal");
-            Cylinder(parent, $"Roof_WaterTank_{suffix}", center + new Vector3(0.1f, 0.95f, 1.5f), 1.15f, 1.9f, "Mat_Metal");
-            Cylinder(parent, $"Roof_Antenna_{suffix}", center + new Vector3(-2.1f, 1.45f, -1.1f), 0.08f, 2.9f, "Mat_Trim");
-        }
-
-        static void BuildAbandonedBus(Transform parent, Vector3 center, float yaw)
-        {
-            var bus = new GameObject("Mid_Bus_Abandoned");
-            bus.transform.SetParent(parent, true);
-            bus.transform.position = center;
-            bus.transform.rotation = Quaternion.Euler(0f, yaw, 0f);
-            SetStatic(bus);
-            Box(bus.transform, "Body", Vector3.zero + new Vector3(0f, 0.45f, 0f), new Vector3(3.2f, 2.3f, 8.8f), "Mat_Metal");
-            Box(bus.transform, "Roof", new Vector3(0f, 1.78f, 0f), new Vector3(3.0f, 0.28f, 8.4f), "Mat_Concrete", false);
-            for (int i = -3; i <= 3; i++)
-            {
-                Box(bus.transform, $"Window_L_{i}", new Vector3(-1.64f, 0.95f, i), new Vector3(0.08f, 0.75f, 0.72f), "Mat_Glass", false);
-                Box(bus.transform, $"Window_R_{i}", new Vector3(1.64f, 0.95f, i), new Vector3(0.08f, 0.75f, 0.72f), "Mat_Glass", false);
-            }
-            for (int z = -3; z <= 3; z += 6)
-            {
-                Cylinder(bus.transform, $"Wheel_L_{z}", new Vector3(-1.75f, -0.55f, z), 0.72f, 0.32f, "Mat_Rubber", Axis.X);
-                Cylinder(bus.transform, $"Wheel_R_{z}", new Vector3(1.75f, -0.55f, z), 0.72f, 0.32f, "Mat_Rubber", Axis.X);
-            }
-            Box(bus.transform, "Front_Hazard", new Vector3(0f, 0.4f, -4.52f), new Vector3(2.4f, 0.55f, 0.08f), "Mat_Hazard", false);
+            Box(parent, $"Roof_HVAC_{suffix}", center + new Vector3(1.1f, 0.32f, -0.6f), new Vector3(2f, 0.64f, 1.4f), "Mat_Metal", false);
+            Box(parent, $"Roof_Duct_{suffix}", center + new Vector3(-1.2f, 0.18f, 0.75f), new Vector3(2.8f, 0.36f, 0.48f), "Mat_Metal", false);
+            Cylinder(parent, $"Roof_WaterTank_{suffix}", center + new Vector3(0.1f, 0.95f, 1.5f), 1.15f, 1.9f, "Mat_Metal", Axis.Y, false);
+            Cylinder(parent, $"Roof_Antenna_{suffix}", center + new Vector3(-2.1f, 1.45f, -1.1f), 0.08f, 2.9f, "Mat_Trim", Axis.Y, false);
+            Cylinder(parent, $"Roof_Dish_{suffix}", center + new Vector3(1.8f, 0.5f, 1.2f), 1.2f, 0.15f, "Mat_Metal", Axis.Y, false);
         }
 
         static void StairStack(Transform parent, string name, Vector3 start, int steps, float rise, float width, float dir, float yaw)
@@ -600,65 +748,51 @@ namespace ArenaFps.Editor
 
         static void CrateStack(Transform parent, string name, Vector3 basePos, int wide, int high, string mat)
         {
-            var root = new GameObject(name);
+            // Root is a visible primitive so BreakableCover (RequireComponent Collider) and the
+            // invisible-collider audit both see a Renderer + Collider on the same GameObject.
+            float hTotal = high * 1.08f;
+            float wTotal = wide * 1.15f;
+            var root = Box(parent, name, basePos + new Vector3(0f, hTotal * 0.5f, 0f), new Vector3(wTotal, hTotal, 1.25f), mat);
             root.transform.SetParent(parent, true);
-            root.transform.position = basePos;
-            SetStatic(root);
-            RootCollider(root, new Vector3(0f, 0.55f + (high - 1) * 0.54f, 0f), new Vector3(wide * 1.15f, high * 1.08f, 1.25f));
+            // Detail crates are visual-only (root already collides).
             for (int h = 0; h < high; h++)
             for (int w = 0; w < wide; w++)
             {
                 float jitter = (Hash01(w, h, name.GetHashCode()) - 0.5f) * 0.1f;
-                Box(root.transform, $"Crate_{h}_{w}", new Vector3((w - (wide - 1) * 0.5f) * 1.15f, 0.55f + h * 1.08f, jitter), new Vector3(1.05f, 1.05f, 1.05f), mat);
-                Box(root.transform, $"CrateTrim_{h}_{w}", new Vector3((w - (wide - 1) * 0.5f) * 1.15f, 0.55f + h * 1.08f, -0.55f + jitter), new Vector3(0.95f, 0.12f, 0.08f), "Mat_Trim", false);
+                Box(root.transform, $"Crate_{h}_{w}", new Vector3((w - (wide - 1) * 0.5f) * 1.15f, 0.55f + h * 1.08f - hTotal * 0.5f, jitter), new Vector3(1.05f, 1.05f, 1.05f), mat, false);
             }
         }
 
         static void SandbagWall(Transform parent, string name, Vector3 basePos, int count, float yaw)
         {
-            var root = new GameObject(name);
-            root.transform.SetParent(parent, true);
-            root.transform.position = basePos;
+            float w = count * 0.72f + 0.75f;
+            var root = Box(parent, name, basePos + new Vector3(0f, 0.52f, 0f), new Vector3(w, 1.05f, 0.68f), "Mat_Sandbag");
             root.transform.rotation = Quaternion.Euler(0f, yaw, 0f);
-            SetStatic(root);
-            RootCollider(root, new Vector3(0f, 0.52f, 0f), new Vector3(count * 0.72f + 0.75f, 1.05f, 0.68f));
             for (int row = 0; row < 3; row++)
             for (int i = 0; i < count; i++)
             {
                 float x = (i - (count - 1) * 0.5f) * 0.72f + (row % 2) * 0.35f;
-                Box(root.transform, $"Sandbag_{row}_{i}", new Vector3(x, 0.25f + row * 0.28f, 0f), new Vector3(0.68f, 0.26f, 0.52f), "Mat_Sandbag");
+                Box(root.transform, $"Sandbag_{row}_{i}", new Vector3(x, 0.25f + row * 0.28f - 0.52f, 0f), new Vector3(0.68f, 0.26f, 0.52f), "Mat_Sandbag", false);
             }
         }
 
         static void ConcreteBarrier(Transform parent, string name, Vector3 basePos, float yaw, int count)
         {
-            var root = new GameObject(name);
-            root.transform.SetParent(parent, true);
-            root.transform.position = basePos;
+            float w = count * 1.45f;
+            var root = Box(parent, name, basePos + new Vector3(0f, 0.5f, 0f), new Vector3(w, 1.0f, 0.55f), "Mat_Concrete");
             root.transform.rotation = Quaternion.Euler(0f, yaw, 0f);
-            SetStatic(root);
-            RootCollider(root, new Vector3(0f, 0.72f, 0f), new Vector3(count * 1.45f, 1.45f, 0.75f));
             for (int i = 0; i < count; i++)
             {
                 float x = (i - (count - 1) * 0.5f) * 1.45f;
-                Box(root.transform, $"Jersey_{i}_Base", new Vector3(x, 0.42f, 0f), new Vector3(1.32f, 0.84f, 0.6f), "Mat_Concrete");
-                Box(root.transform, $"Jersey_{i}_Top", new Vector3(x, 1.08f, 0f), new Vector3(1.16f, 0.48f, 0.32f), "Mat_Concrete");
+                Box(root.transform, $"Jersey_{i}", new Vector3(x, 0f, 0f), new Vector3(1.32f, 1.0f, 0.55f), "Mat_Concrete", false);
             }
         }
 
         static void Dumpster(Transform parent, string name, Vector3 basePos, float yaw)
         {
-            var root = new GameObject(name);
-            root.transform.SetParent(parent, true);
-            root.transform.position = basePos;
+            var root = Box(parent, name, basePos + new Vector3(0f, 0.82f, 0f), new Vector3(2.6f, 1.45f, 1.45f), "Mat_Metal");
             root.transform.rotation = Quaternion.Euler(0f, yaw, 0f);
-            SetStatic(root);
-            RootCollider(root, new Vector3(0f, 0.86f, 0f), new Vector3(2.75f, 1.75f, 1.55f));
-            Box(root.transform, "Body", new Vector3(0f, 0.82f, 0f), new Vector3(2.6f, 1.45f, 1.45f), "Mat_Metal");
-            Box(root.transform, "Lid", new Vector3(0f, 1.62f, 0.08f), new Vector3(2.7f, 0.18f, 1.35f), "Mat_Trim", false);
-            Box(root.transform, "FrontHazard", new Vector3(0f, 0.75f, -0.76f), new Vector3(1.7f, 0.45f, 0.08f), "Mat_Hazard", false);
-            Cylinder(root.transform, "Wheel_L", new Vector3(-0.9f, 0.12f, -0.72f), 0.26f, 0.16f, "Mat_Rubber", Axis.X);
-            Cylinder(root.transform, "Wheel_R", new Vector3(0.9f, 0.12f, -0.72f), 0.26f, 0.16f, "Mat_Rubber", Axis.X);
+            Box(root.transform, "Lid", new Vector3(0f, 0.8f, 0.08f), new Vector3(2.7f, 0.18f, 1.35f), "Mat_Trim", false);
         }
 
         static void BarrelCluster(Transform parent, string name, Vector3 basePos)
@@ -672,17 +806,6 @@ namespace ArenaFps.Editor
             Cylinder(root.transform, "Barrel_C", new Vector3(0.05f, 0.62f, -0.62f), 0.62f, 1.24f, "Mat_Metal");
         }
 
-        static void PipeBundle(Transform parent, string name, Vector3 basePos)
-        {
-            var root = new GameObject(name);
-            root.transform.SetParent(parent, true);
-            root.transform.position = basePos;
-            root.transform.rotation = Quaternion.Euler(0f, 12f, 0f);
-            SetStatic(root);
-            for (int i = 0; i < 4; i++)
-                Cylinder(root.transform, $"Pipe_{i}", new Vector3(0f, 0.28f + i * 0.27f, (i % 2) * 0.38f), 0.18f, 3.8f, "Mat_Metal", Axis.Z);
-        }
-
         static void Scaffold(Transform parent, string name, Vector3 basePos, float yaw)
         {
             var root = new GameObject(name);
@@ -693,12 +816,12 @@ namespace ArenaFps.Editor
             for (int x = -1; x <= 1; x += 2)
             for (int z = -1; z <= 1; z += 2)
                 Cylinder(root.transform, $"Post_{x}_{z}", new Vector3(x * 1.6f, 2f, z * 0.55f), 0.08f, 4f, "Mat_Metal");
+            Box(root.transform, "Plank", new Vector3(0f, 2.25f, 0f), new Vector3(3.6f, 0.18f, 1.25f), "Mat_Wood");
             for (int y = 1; y <= 3; y++)
             {
-                Cylinder(root.transform, $"Rail_F_{y}", new Vector3(0f, y, -0.62f), 0.06f, 3.4f, "Mat_Metal", Axis.X);
-                Cylinder(root.transform, $"Rail_B_{y}", new Vector3(0f, y, 0.62f), 0.06f, 3.4f, "Mat_Metal", Axis.X);
+                Cylinder(root.transform, $"Rail_F_{y}", new Vector3(0f, y, -0.62f), 0.06f, 3.4f, "Mat_Metal", Axis.X, y <= 2);
+                Cylinder(root.transform, $"Rail_B_{y}", new Vector3(0f, y, 0.62f), 0.06f, 3.4f, "Mat_Metal", Axis.X, y <= 2);
             }
-            Box(root.transform, "Plank", new Vector3(0f, 2.25f, 0f), new Vector3(3.6f, 0.18f, 1.25f), "Mat_Wood");
         }
 
         static void Billboard(Transform parent, string name, Vector3 pos, Vector3 size, float yaw)
@@ -709,8 +832,6 @@ namespace ArenaFps.Editor
             root.transform.rotation = Quaternion.Euler(0f, yaw, 0f);
             SetStatic(root);
             Box(root.transform, "Panel", Vector3.zero, size, "Mat_Graffiti", false);
-            Box(root.transform, "Frame_T", new Vector3(0f, size.y * 0.5f + 0.08f, 0f), new Vector3(size.x + 0.25f, 0.16f, size.z + 0.08f), "Mat_Trim", false);
-            Box(root.transform, "Frame_B", new Vector3(0f, -size.y * 0.5f - 0.08f, 0f), new Vector3(size.x + 0.25f, 0.16f, size.z + 0.08f), "Mat_Trim", false);
             Box(root.transform, "Support_L", new Vector3(-size.x * 0.35f, -size.y * 0.75f, 0f), new Vector3(0.15f, size.y * 0.75f, 0.15f), "Mat_Metal");
             Box(root.transform, "Support_R", new Vector3(size.x * 0.35f, -size.y * 0.75f, 0f), new Vector3(0.15f, size.y * 0.75f, 0.15f), "Mat_Metal");
         }
@@ -718,7 +839,6 @@ namespace ArenaFps.Editor
         static void TeamBanner(Transform parent, string name, Vector3 pos, string label, string mat)
         {
             Box(parent, name, pos, new Vector3(8.2f, 1.25f, 0.16f), mat, false);
-            Box(parent, name + "_DarkBacker", pos + new Vector3(0f, 0f, 0.09f), new Vector3(8.6f, 1.55f, 0.08f), "Mat_Trim", false);
             for (int i = 0; i < label.Length; i++)
             {
                 float x = (i - (label.Length - 1) * 0.5f) * 1.05f;
@@ -728,13 +848,13 @@ namespace ArenaFps.Editor
 
         static void LampPost(Transform parent, Vector3 basePos, float yaw)
         {
-            var root = new GameObject($"Prop_LampPost_{basePos.x}_{basePos.z}");
+            var root = new GameObject($"Prop_LampPost_{basePos.x:0}_{basePos.z:0}");
             root.transform.SetParent(parent, true);
             root.transform.position = basePos;
             root.transform.rotation = Quaternion.Euler(0f, yaw, 0f);
             SetStatic(root);
             Cylinder(root.transform, "Pole", new Vector3(0f, 2.2f, 0f), 0.12f, 4.4f, "Mat_Metal");
-            Box(root.transform, "Arm", new Vector3(0f, 4.25f, 0.75f), new Vector3(0.12f, 0.12f, 1.5f), "Mat_Metal");
+            Box(root.transform, "Arm", new Vector3(0f, 4.25f, 0.75f), new Vector3(0.12f, 0.12f, 1.5f), "Mat_Metal", false);
             Box(root.transform, "Lamp", new Vector3(0f, 4.05f, 1.48f), new Vector3(0.48f, 0.25f, 0.38f), "Mat_PaintWhite", false);
         }
 
@@ -762,10 +882,9 @@ namespace ArenaFps.Editor
             var go = Box(parent, name, mid, new Vector3(0.06f, 0.06f, dir.magnitude), "Mat_Trim", false);
             go.transform.rotation = Quaternion.LookRotation(dir.normalized, Vector3.up);
         }
+        #endregion
 
-        static void Decal(Transform parent, string name, Vector3 center, Vector3 size, string mat)
-            => Box(parent, name, center, size, mat, false);
-
+        #region Primitives + collider policy
         static GameObject Box(Transform parent, string name, Vector3 center, Vector3 size, string matKey, bool collider = true)
         {
             var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -790,7 +909,7 @@ namespace ArenaFps.Editor
 
         enum Axis { Y, X, Z }
 
-        static GameObject Cylinder(Transform parent, string name, Vector3 center, float diameter, float length, string matKey, Axis axis = Axis.Y)
+        static GameObject Cylinder(Transform parent, string name, Vector3 center, float diameter, float length, string matKey, Axis axis = Axis.Y, bool collider = true)
         {
             var go = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
             go.name = name;
@@ -806,6 +925,11 @@ namespace ArenaFps.Editor
             ApplyMaterial(go, matKey);
             var tag = go.GetComponent<MapMaterialTag>() ?? go.AddComponent<MapMaterialTag>();
             tag.materialKey = matKey;
+            if (!collider)
+            {
+                var c = go.GetComponent<Collider>();
+                if (c != null) Object.DestroyImmediate(c);
+            }
             return go;
         }
 
@@ -818,36 +942,60 @@ namespace ArenaFps.Editor
                 renderer.sharedMaterial = mat;
         }
 
-        static void RootCollider(GameObject root, Vector3 center, Vector3 size)
+        /// <summary>
+        /// Final safety net: destroy any collider whose GameObject has no enabled renderer,
+        /// and strip decorative trim colliders whose world centre is above head height.
+        /// </summary>
+        static void StripIllegalColliders(Transform root)
         {
-            var collider = root.GetComponent<BoxCollider>();
-            if (collider == null)
-                collider = root.AddComponent<BoxCollider>();
-            if (collider == null)
-                return;
-            collider.center = center;
-            collider.size = size;
+            int stripped = 0;
+            foreach (var c in root.GetComponentsInChildren<Collider>(true))
+            {
+                if (c == null) continue;
+                var r = c.GetComponent<Renderer>();
+                bool noVisible = r == null || !r.enabled;
+                bool highDecor = c.bounds.center.y > HeadHeight && IsDecorName(c.name);
+                if (noVisible || highDecor)
+                {
+                    Object.DestroyImmediate(c);
+                    stripped++;
+                }
+            }
+            Debug.Log($"[ArenaFps] StripIllegalColliders removed {stripped} colliders.");
         }
+
+        static bool IsDecorName(string n) =>
+            n.Contains("Parapet") || n.Contains("RoofLedge") || n.Contains("Awning")
+            || n.Contains("Sign_") || n.Contains("Cable_") || n.Contains("AC_Unit")
+            || n.Contains("Dish") || n.Contains("Antenna") || n.Contains("Billboard")
+            || n.Contains("Wire") || n.Contains("_Cap") || n.Contains("HVAC")
+            || n.Contains("Pillar");
 
         static void SetStatic(GameObject go)
         {
-            GameObjectUtility.SetStaticEditorFlags(go, StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccluderStatic | StaticEditorFlags.OccludeeStatic);
+            GameObjectUtility.SetStaticEditorFlags(go,
+                StaticEditorFlags.BatchingStatic | StaticEditorFlags.OccluderStatic | StaticEditorFlags.OccludeeStatic);
         }
+        #endregion
 
+        #region Spawns / lighting / capture / nav
         static void PlaceSpawnsAndPlayer()
         {
-            EnsureSpawn("PlayerSpawn", new Vector3(0f, 1.7f, -33.5f), Quaternion.identity);
-            EnsureSpawn("Spawn_Blue_1", new Vector3(-7.5f, 0.1f, -34f), Quaternion.Euler(0f, 0f, 0f));
-            EnsureSpawn("Spawn_Blue_2", new Vector3(7.5f, 0.1f, -34f), Quaternion.Euler(0f, 0f, 0f));
-            EnsureSpawn("Spawn_Blue_3", new Vector3(-20f, 0.1f, -30.5f), Quaternion.Euler(0f, 20f, 0f));
-            EnsureSpawn("Spawn_Blue_4", new Vector3(20f, 0.1f, -30.5f), Quaternion.Euler(0f, -20f, 0f));
-            EnsureSpawn("Spawn_Blue_5", new Vector3(0f, 0.1f, -29f), Quaternion.identity);
+            // Spec §g positions * PosScale.
+            EnsureSpawn("PlayerSpawn", P(0f, 1.7f, -56f), Quaternion.identity);
+            EnsureSpawn("Spawn_Blue_1", P(-8f, 0.1f, -56f), Quaternion.identity);
+            EnsureSpawn("Spawn_Blue_2", P(8f, 0.1f, -56f), Quaternion.identity);
+            EnsureSpawn("Spawn_Blue_3", P(-24f, 0.1f, -52f), Quaternion.Euler(0f, 20f, 0f));
+            EnsureSpawn("Spawn_Blue_4", P(26f, 0.1f, -52f), Quaternion.Euler(0f, -20f, 0f));
+            EnsureSpawn("Spawn_Blue_5", P(0f, 0.1f, -50f), Quaternion.identity);
+            EnsureSpawn("Spawn_Blue_6", P(-14f, 0.1f, -48f), Quaternion.Euler(0f, 10f, 0f));
 
-            EnsureSpawn("Spawn_Red_1", new Vector3(7.5f, 0.1f, 34f), Quaternion.Euler(0f, 180f, 0f));
-            EnsureSpawn("Spawn_Red_2", new Vector3(-7.5f, 0.1f, 34f), Quaternion.Euler(0f, 180f, 0f));
-            EnsureSpawn("Spawn_Red_3", new Vector3(20f, 0.1f, 30.5f), Quaternion.Euler(0f, 200f, 0f));
-            EnsureSpawn("Spawn_Red_4", new Vector3(-20f, 0.1f, 30.5f), Quaternion.Euler(0f, 160f, 0f));
-            EnsureSpawn("Spawn_Red_5", new Vector3(0f, 0.1f, 29f), Quaternion.Euler(0f, 180f, 0f));
+            EnsureSpawn("Spawn_Red_1", P(8f, 0.1f, 56f), Quaternion.Euler(0f, 180f, 0f));
+            EnsureSpawn("Spawn_Red_2", P(-8f, 0.1f, 56f), Quaternion.Euler(0f, 180f, 0f));
+            EnsureSpawn("Spawn_Red_3", P(26f, 0.1f, 52f), Quaternion.Euler(0f, 200f, 0f));
+            EnsureSpawn("Spawn_Red_4", P(-24f, 0.1f, 52f), Quaternion.Euler(0f, 160f, 0f));
+            EnsureSpawn("Spawn_Red_5", P(0f, 0.1f, 50f), Quaternion.Euler(0f, 180f, 0f));
+            EnsureSpawn("Spawn_Red_6", P(14f, 0.1f, 48f), Quaternion.Euler(0f, 190f, 0f));
 
             var player = GameObject.Find("Player");
             var spawn = GameObject.Find("PlayerSpawn");
@@ -877,28 +1025,32 @@ namespace ArenaFps.Editor
 
             RenderSettings.fog = true;
             RenderSettings.fogMode = FogMode.ExponentialSquared;
-            RenderSettings.fogDensity = 0.0065f;
-            RenderSettings.fogColor = new Color(0.47f, 0.51f, 0.56f);
+            RenderSettings.fogDensity = 0.0045f;
+            RenderSettings.fogColor = new Color(0.77f, 0.71f, 0.60f);
             RenderSettings.ambientMode = AmbientMode.Trilight;
             RenderSettings.ambientSkyColor = new Color(0.58f, 0.61f, 0.68f);
             RenderSettings.ambientEquatorColor = new Color(0.39f, 0.36f, 0.32f);
             RenderSettings.ambientGroundColor = new Color(0.16f, 0.15f, 0.13f);
 
-            var probe = new GameObject("AAA_ReflectionProbe_Mid");
-            probe.transform.position = new Vector3(0f, 3.2f, 0f);
-            var rp = probe.AddComponent<ReflectionProbe>();
-            rp.size = new Vector3(58f, 18f, 78f);
-            rp.mode = ReflectionProbeMode.Realtime;
-            rp.refreshMode = ReflectionProbeRefreshMode.OnAwake;
-            rp.intensity = 0.55f;
+            var probeGo = GameObject.Find("AAA_ReflectionProbe_Mid");
+            if (probeGo == null)
+            {
+                probeGo = new GameObject("AAA_ReflectionProbe_Mid");
+                probeGo.transform.position = new Vector3(0f, 4f, 0f);
+                var rp = probeGo.AddComponent<ReflectionProbe>();
+                rp.size = new Vector3(MapWidth + 10f, 22f, MapLength + 10f);
+                rp.mode = ReflectionProbeMode.Realtime;
+                rp.refreshMode = ReflectionProbeRefreshMode.OnAwake;
+                rp.intensity = 0.55f;
+            }
         }
 
         static void BuildCaptureRig()
         {
             var rig = new GameObject("__AaaCaptureRig");
-            CreateCaptureCamera(rig.transform, "AAA_Aerial_Camera", new Vector3(0f, 58f, -4f), new Vector3(0f, 0f, 0f), 54f);
-            CreateCaptureCamera(rig.transform, "AAA_EyeLevel_Camera", new Vector3(-21.5f, 1.75f, -25f), new Vector3(0f, 1.6f, 3.5f), 72f);
-            CreateCaptureCamera(rig.transform, "AAA_MidLane_Camera", new Vector3(4.5f, 1.8f, -18f), new Vector3(-1.2f, 1.5f, 5f), 68f);
+            CreateCaptureCamera(rig.transform, "AAA_Aerial_Camera", new Vector3(0f, 90f, -6f), new Vector3(0f, 0f, 0f), 54f);
+            CreateCaptureCamera(rig.transform, "AAA_EyeLevel_Camera", new Vector3(SX(-21.5f), 1.75f, SZ(-25f)), new Vector3(SX(-1f), 1.6f, SZ(3.5f)), 72f);
+            CreateCaptureCamera(rig.transform, "AAA_MidLane_Camera", new Vector3(SX(4.5f), 1.8f, SZ(-18f)), new Vector3(SX(-1.2f), 1.5f, SZ(5f)), 68f);
         }
 
         static void CreateCaptureCamera(Transform parent, string name, Vector3 pos, Vector3 lookAt, float fov)
@@ -909,7 +1061,7 @@ namespace ArenaFps.Editor
             go.transform.rotation = Quaternion.LookRotation((lookAt - pos).normalized, Vector3.up);
             var cam = go.AddComponent<Camera>();
             cam.nearClipPlane = 0.05f;
-            cam.farClipPlane = 180f;
+            cam.farClipPlane = 320f;
             cam.fieldOfView = fov;
             cam.clearFlags = CameraClearFlags.Skybox;
             cam.allowHDR = true;
@@ -919,8 +1071,7 @@ namespace ArenaFps.Editor
         static void BakeNavMeshFallback()
         {
             var surfaceType = System.Type.GetType("Unity.AI.Navigation.NavMeshSurface, Unity.AI.Navigation");
-            if (surfaceType == null)
-                return;
+            if (surfaceType == null) return;
 
             foreach (var existing in Object.FindObjectsByType(surfaceType))
             {
@@ -937,10 +1088,10 @@ namespace ArenaFps.Editor
                 if (geometryType != null)
                     useGeometry.SetValue(surface, System.Enum.Parse(geometryType, "PhysicsColliders"));
             }
-
             surfaceType.GetMethod("BuildNavMesh")?.Invoke(surface, null);
             Debug.Log("[ArenaFps] Fallback NavMesh bake complete.");
         }
+        #endregion
     }
 }
 #endif

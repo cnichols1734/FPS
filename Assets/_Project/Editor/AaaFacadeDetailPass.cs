@@ -845,7 +845,10 @@ namespace ArenaFps.Editor
             go.isStatic = true;
             var r = go.GetComponent<MeshRenderer>();
             if (r != null) r.sharedMaterial = mat;
-            if (!collider)
+            // Decorative trim above head height never gets collision (parapets, ledges, awnings, etc.).
+            bool highDecor = pos.y > 2.2f || name.Contains("Parapet") || name.Contains("Ledge")
+                             || name.Contains("Awning") || name.Contains("Sign") || name.Contains("Pillar");
+            if (!collider || highDecor)
             {
                 var c = go.GetComponent<Collider>();
                 if (c != null) Object.DestroyImmediate(c);
@@ -863,6 +866,9 @@ namespace ArenaFps.Editor
             go.isStatic = true;
             var r = go.GetComponent<MeshRenderer>();
             if (r != null) r.sharedMaterial = mat;
+            // Facade cylinders are decorative (vents, pipes) — no collider.
+            var col = go.GetComponent<Collider>();
+            if (col != null) Object.DestroyImmediate(col);
             return go;
         }
     }

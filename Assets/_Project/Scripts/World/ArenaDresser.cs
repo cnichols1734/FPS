@@ -4,10 +4,28 @@ using UnityEngine.Rendering;
 namespace ArenaFps.World
 {
     /// <summary>
-    /// Runtime dress of the greybox / three-lane map — materials + HDRI + light when textures exist.
+    /// LEGACY greybox dresser. DISABLED BY DEFAULT — do not re-enable on the dressed Arena map.
+    ///
+    /// This ran at runtime and silently reverted the authored scene every time you pressed Play:
+    ///   - ApplySky() replaced the skybox with Resources/HDRI/abandoned_construction_4k
+    ///     (the "old warehouse" sky) instead of the authored overcast_soil_puresky.
+    ///   - ApplyNamedFallbacks()/ApplyTagged() overwrote real PBR materials — including Ground —
+    ///     with flat runtime-built colours carrying no normal map.
+    ///   - TuneLight() overrode the tuned sun and reset fog to a cold blue-grey at ~4x the
+    ///     authored density.
+    ///
+    /// It was also marked [RuntimeInitializeOnLoadMethod], so it spawned itself even when absent
+    /// from the scene — which is why the override could not be removed from the Hierarchy.
+    ///
+    /// It is kept only to dress an undressed greybox. To use it there, add the component manually
+    /// and tick runtimeDressingEnabled. It will never self-spawn again.
     /// </summary>
     public sealed class ArenaDresser : MonoBehaviour
     {
+        [Tooltip("Off by default. Only enable on an UNDRESSED greybox map — on the dressed Arena " +
+                 "map this replaces authored PBR materials, sky, sun and fog with placeholders.")]
+        [SerializeField] bool runtimeDressingEnabled;
+
         Material _asphalt;
         Material _brick;
         Material _concrete;
@@ -15,23 +33,21 @@ namespace ArenaFps.World
         Material _wood;
         Material _plaster;
 
-        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
-        static void Boot()
-        {
-            if (Object.FindAnyObjectByType<ArenaDresser>() != null)
-                return;
-            var go = new GameObject("__ArenaDresser");
-            go.AddComponent<ArenaDresser>();
-        }
-
         void Start()
         {
+            if (!runtimeDressingEnabled)
+            {
+                // Authored art wins. Leave sky, materials, sun and fog exactly as saved.
+                return;
+            }
+
+            Debug.LogWarning("[ArenaDresser] Runtime dressing is ENABLED — it is overwriting " +
+                             "authored materials, sky, sun and fog with greybox placeholders.");
             BuildMaterials();
             ApplySky();
             ApplyTagged();
             ApplyNamedFallbacks();
             TuneLight();
-            Debug.Log("[ArenaDresser] Three-lane materials/lighting applied.");
         }
 
         void BuildMaterials()

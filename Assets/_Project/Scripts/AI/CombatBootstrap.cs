@@ -26,16 +26,17 @@ namespace ArenaFps.AI
         int _aliveBlue;
         int _aliveRed;
 
+        // Overflow spawn pads (OVERFLOW_SPEC §g * 1.22 position scale). Matches AaaEnvironmentPass.
         static readonly Vector3[] BlueFallback =
         {
-            new(-6f, 0f, -26f), new(6f, 0f, -26f), new(-12f, 0f, -22f),
-            new(12f, 0f, -22f), new(0f, 0f, -22f), new(-8f, 0f, -18f),
+            new(-9.76f, 0f, -68.32f), new(9.76f, 0f, -68.32f), new(-29.28f, 0f, -63.44f),
+            new(31.72f, 0f, -63.44f), new(0f, 0f, -61f), new(-17.08f, 0f, -58.56f),
         };
 
         static readonly Vector3[] RedFallback =
         {
-            new(0f, 0f, 26f), new(-6f, 0f, 26f), new(6f, 0f, 26f),
-            new(-12f, 0f, 22f), new(12f, 0f, 22f), new(8f, 0f, 18f),
+            new(9.76f, 0f, 68.32f), new(-9.76f, 0f, 68.32f), new(31.72f, 0f, 63.44f),
+            new(-29.28f, 0f, 63.44f), new(0f, 0f, 61f), new(17.08f, 0f, 58.56f),
         };
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -157,7 +158,7 @@ namespace ArenaFps.AI
             bool blue = team == TeamId.Blue;
             int idx = blue ? _blueIndex : _redIndex;
             string prefix = blue ? "Spawn_Blue_" : "Spawn_Red_";
-            var named = GameObject.Find(prefix + ((idx % 5) + 1));
+            var named = GameObject.Find(prefix + ((idx % 6) + 1));
             if (named != null)
                 return named.transform.position;
 
@@ -167,10 +168,12 @@ namespace ArenaFps.AI
 
         void EnsureNavMesh()
         {
-            // Prefer several sample points — the map is larger than the old greybox.
-            if (NavMesh.SamplePosition(Vector3.zero, out _, 16f, NavMesh.AllAreas)
-                || NavMesh.SamplePosition(new Vector3(0f, 0f, -20f), out _, 8f, NavMesh.AllAreas)
-                || NavMesh.SamplePosition(new Vector3(0f, 0f, 20f), out _, 8f, NavMesh.AllAreas))
+            // Prefer several sample points across the 118x154 Overflow footprint.
+            if (NavMesh.SamplePosition(Vector3.zero, out _, 24f, NavMesh.AllAreas)
+                || NavMesh.SamplePosition(new Vector3(0f, 0f, -50f), out _, 16f, NavMesh.AllAreas)
+                || NavMesh.SamplePosition(new Vector3(0f, 0f, 50f), out _, 16f, NavMesh.AllAreas)
+                || NavMesh.SamplePosition(new Vector3(-30f, 0f, 0f), out _, 16f, NavMesh.AllAreas)
+                || NavMesh.SamplePosition(new Vector3(30f, 0f, 0f), out _, 16f, NavMesh.AllAreas))
                 return;
 
             var surfaceType = System.Type.GetType("Unity.AI.Navigation.NavMeshSurface, Unity.AI.Navigation");
