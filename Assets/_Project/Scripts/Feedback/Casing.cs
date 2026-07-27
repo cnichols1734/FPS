@@ -23,6 +23,8 @@ namespace ArenaFps.Feedback
                 _rb = GetComponent<Rigidbody>();
 
             gameObject.SetActive(true);
+            var col = GetComponent<Collider>();
+            if (col != null) col.enabled = true;
             _tinked = false;
             _retireAt = Time.time + Lifetime;
 
@@ -34,7 +36,11 @@ namespace ArenaFps.Feedback
         void Update()
         {
             if (Time.time >= _retireAt)
+            {
+                var col = GetComponent<Collider>();
+                if (col != null) col.enabled = false;
                 gameObject.SetActive(false);
+            }
         }
 
         void OnCollisionEnter(Collision collision)
