@@ -32,6 +32,16 @@ DualSense rumble + lightbar require **USB-C** on macOS (Bluetooth input works; h
 - `Arena FPS / Bootstrap URP Project`
 - `Arena FPS / Create Player Prefab`
 - `Arena FPS / Setup Arena Scene (Place Player)`
+- `Arena FPS / Build Three-Lane TDM Map` — rebuilds `Arena` as a BO2-style 3-lane TDM layout
+
+## Solo TDM (current)
+
+Press Play on `Arena.unity`:
+
+- **Blue** (you + 4 ally bots) vs **Red** (5 enemy bots)
+- Scoreboard: first to **75**, 10:00 clock
+- Friendly fire off; bots hunt nearest enemy
+- See `ASSETS_NEEDED.md` for the city-kit / prop downloads that unlock the next visual leap
 
 ## Asset policy
 

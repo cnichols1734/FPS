@@ -9,29 +9,33 @@ using UnityEngine.AI;
 namespace ArenaFps.AI
 {
     /// <summary>
-    /// Stands the encounter up at runtime so pressing Play is enough — no editor menu required.
-    /// Bots are built in code rather than from a prefab because the rig is procedural.
+    /// Boots a solo TDM match: player + ally bots vs enemy bots, score limit, team spawns.
     /// </summary>
     public sealed class CombatBootstrap : MonoBehaviour
     {
-        [SerializeField] int botCount = 1;
+        [SerializeField] int allyBots = 4;
+        [SerializeField] int enemyBots = 5;
+        [SerializeField] int scoreLimit = 75;
+        [SerializeField] float matchSeconds = 600f;
         [SerializeField] bool spawnIfMissing = true;
         [SerializeField] float respawnDelay = 2.5f;
         [SerializeField] bool respawn = true;
 
-        int _spawnIndex;
-        int _alive;
+        int _blueIndex;
+        int _redIndex;
+        int _aliveBlue;
+        int _aliveRed;
 
-        static readonly Vector3[] Spots =
+        static readonly Vector3[] BlueFallback =
         {
-            new(-9f, 0f, 9f),
-            new(9f, 0f, 7f),
-            new(0f, 0f, 13f),
-            new(-5f, 0f, -3f),
-            new(7f, 0f, 12f),
-            new(-11f, 0f, 2f),
-            new(11f, 0f, -2f),
-            new(2f, 0f, 17f),
+            new(-6f, 0f, -26f), new(6f, 0f, -26f), new(-12f, 0f, -22f),
+            new(12f, 0f, -22f), new(0f, 0f, -22f), new(-8f, 0f, -18f),
+        };
+
+        static readonly Vector3[] RedFallback =
+        {
+            new(0f, 0f, 26f), new(-6f, 0f, 26f), new(6f, 0f, 26f),
+            new(-12f, 0f, 22f), new(12f, 0f, 22f), new(8f, 0f, 18f),
         };
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -48,92 +52,173 @@ namespace ArenaFps.AI
             if (!spawnIfMissing)
                 return;
 
-            // Bake the audio bank and the FX batches before the first shot, not during it.
             SfxBank.Prewarm();
             _ = ImpactFx.Instance;
             _ = Sfx3D.Instance;
+
+            EnsureMatch();
+            AssignPlayerTeam();
 
             if (FindObjectsByType<BotBrain>().Length > 0)
                 return;
 
             EnsureNavMesh();
             TagBreakables();
-            for (int i = 0; i < botCount; i++)
-                SpawnNext();
+
+            for (int i = 0; i < allyBots; i++)
+                SpawnTeam(TeamId.Blue);
+            for (int i = 0; i < enemyBots; i++)
+                SpawnTeam(TeamId.Red);
+
+            Debug.Log($"[CombatBootstrap] TDM live — Blue {allyBots}+player vs Red {enemyBots}. Score to {scoreLimit}.");
         }
 
-        void SpawnNext()
+        void EnsureMatch()
         {
-            if (_alive >= botCount)
+            if (MatchController.Instance != null)
+            {
+                MatchController.Instance.Configure(scoreLimit, matchSeconds);
+                return;
+            }
+
+            var go = new GameObject("__Match");
+            var match = go.AddComponent<MatchController>();
+            match.Configure(scoreLimit, matchSeconds);
+        }
+
+        void AssignPlayerTeam()
+        {
+            var player = GameObject.Find("Player");
+            if (player == null)
+            {
+                var fps = FindAnyObjectByType<Player.FpsController>();
+                player = fps != null ? fps.gameObject : null;
+            }
+            if (player == null)
                 return;
 
-            int index = _spawnIndex++;
-            var position = Spots[index % Spots.Length];
-            if (NavMesh.SamplePosition(position, out var hit, 5f, NavMesh.AllAreas))
+            var team = player.GetComponent<TeamMember>() ?? player.AddComponent<TeamMember>();
+            team.Team = TeamId.Blue;
+
+            var damageable = player.GetComponent<Damageable>();
+            damageable?.MarkAsPlayer();
+        }
+
+        void SpawnTeam(TeamId team)
+        {
+            bool blue = team == TeamId.Blue;
+            if (blue && _aliveBlue >= allyBots)
+                return;
+            if (!blue && _aliveRed >= enemyBots)
+                return;
+
+            var position = NextSpawn(team);
+            if (NavMesh.SamplePosition(position, out var hit, 6f, NavMesh.AllAreas))
                 position = hit.position;
 
-            var rotation = Quaternion.Euler(0f, Random.Range(0f, 360f), 0f);
-            var bot = BotFactory.Create(position, rotation);
-            bot.name = $"Bot_{index + 1}";
-            _alive++;
+            // Face toward mid so the first peek is into the map.
+            var face = Quaternion.LookRotation(blue ? Vector3.forward : Vector3.back);
+            var bot = BotFactory.Create(position, face, 100f, team);
+            int index = blue ? ++_blueIndex : ++_redIndex;
+            bot.name = $"{(blue ? "Blue" : "Red")}_Bot_{index}";
+            if (blue) _aliveBlue++; else _aliveRed++;
 
             if (!respawn)
                 return;
 
             var damageable = bot.GetComponent<Damageable>();
             if (damageable == null)
-            {
-                Debug.LogWarning($"[CombatBootstrap] {bot.name} has no Damageable — it will never respawn.");
                 return;
-            }
 
-            damageable.onDeath.AddListener(() => StartCoroutine(Recycle(bot)));
+            var capturedTeam = team;
+            damageable.onDeath.AddListener(() => StartCoroutine(Recycle(bot, capturedTeam)));
         }
 
-        System.Collections.IEnumerator Recycle(GameObject bot)
+        System.Collections.IEnumerator Recycle(GameObject bot, TeamId team)
         {
-            _alive = Mathf.Max(0, _alive - 1);
+            if (team == TeamId.Blue)
+                _aliveBlue = Mathf.Max(0, _aliveBlue - 1);
+            else
+                _aliveRed = Mathf.Max(0, _aliveRed - 1);
+
             yield return new WaitForSeconds(respawnDelay);
             if (bot != null)
                 Destroy(bot);
             yield return new WaitForSeconds(0.1f);
-            SpawnNext();
+
+            if (MatchController.Instance != null && !MatchController.Instance.IsRunning)
+                yield break;
+
+            SpawnTeam(team);
+        }
+
+        Vector3 NextSpawn(TeamId team)
+        {
+            bool blue = team == TeamId.Blue;
+            int idx = blue ? _blueIndex : _redIndex;
+            string prefix = blue ? "Spawn_Blue_" : "Spawn_Red_";
+            var named = GameObject.Find(prefix + ((idx % 5) + 1));
+            if (named != null)
+                return named.transform.position;
+
+            var fallback = blue ? BlueFallback : RedFallback;
+            return fallback[idx % fallback.Length];
         }
 
         void EnsureNavMesh()
         {
-            if (NavMesh.SamplePosition(Vector3.zero, out _, 8f, NavMesh.AllAreas))
+            // Prefer several sample points — the map is larger than the old greybox.
+            if (NavMesh.SamplePosition(Vector3.zero, out _, 16f, NavMesh.AllAreas)
+                || NavMesh.SamplePosition(new Vector3(0f, 0f, -20f), out _, 8f, NavMesh.AllAreas)
+                || NavMesh.SamplePosition(new Vector3(0f, 0f, 20f), out _, 8f, NavMesh.AllAreas))
                 return;
 
             var surfaceType = System.Type.GetType("Unity.AI.Navigation.NavMeshSurface, Unity.AI.Navigation");
             if (surfaceType == null)
             {
-                Debug.LogWarning("[CombatBootstrap] NavMeshSurface unavailable — bots cannot path. Run Arena FPS → Spawn Combat.");
+                Debug.LogWarning("[CombatBootstrap] NavMeshSurface unavailable — bots cannot path.");
                 return;
             }
 
             var go = new GameObject("__RuntimeNavMesh");
             var surface = go.AddComponent(surfaceType);
 
-            // Keep the viewmodel and debris out of the bake before it runs, not after.
+            // Physics colliders avoid "mesh not readable" spam from primitives / FBX.
+            var useGeometry = surfaceType.GetProperty("useGeometry");
+            if (useGeometry != null && useGeometry.CanWrite)
+            {
+                var geometryType = System.Type.GetType(
+                    "UnityEngine.AI.NavMeshCollectGeometry, UnityEngine");
+                if (geometryType != null)
+                    useGeometry.SetValue(surface, System.Enum.Parse(geometryType, "PhysicsColliders"));
+            }
+
             var layerMask = surfaceType.GetProperty("layerMask");
             if (layerMask != null && layerMask.CanWrite)
                 layerMask.SetValue(surface, (LayerMask)GameLayers.NavMeshMask);
+
+            var collectObjects = surfaceType.GetProperty("collectObjects");
+            if (collectObjects != null && collectObjects.CanWrite)
+            {
+                var collectType = System.Type.GetType(
+                    "Unity.AI.Navigation.CollectObjects, Unity.AI.Navigation");
+                if (collectType != null)
+                    collectObjects.SetValue(surface, System.Enum.Parse(collectType, "All"));
+            }
 
             surfaceType.GetMethod("BuildNavMesh")?.Invoke(surface, null);
         }
 
         void TagBreakables()
         {
-            foreach (var name in new[] { "Cover_A", "Cover_B", "Cover_C" })
+            foreach (var go in FindObjectsByType<Transform>())
             {
-                var go = GameObject.Find(name);
-                if (go == null)
+                if (!go.name.StartsWith("Cover_"))
                     continue;
                 if (go.GetComponent<BreakableCover>() == null)
-                    go.AddComponent<BreakableCover>();
+                    go.gameObject.AddComponent<BreakableCover>();
                 if (go.GetComponent<SurfaceTag>() == null)
-                    go.AddComponent<SurfaceTag>();
+                    go.gameObject.AddComponent<SurfaceTag>();
             }
         }
     }

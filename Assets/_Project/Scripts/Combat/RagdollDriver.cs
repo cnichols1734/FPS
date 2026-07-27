@@ -22,7 +22,15 @@ namespace ArenaFps.Combat
         [SerializeField] float punchDamping = 13f;
         [SerializeField] float punchScale = 1.6f;
 
+        [Header("Death")]
+        [Tooltip("Damage at or above which the death animation is skipped and physics takes over at once.")]
+        [SerializeField] float heavyDeathThreshold = 85f;
+        [Tooltip("Ceiling on the animated lead-in, so a long clip cannot leave a corpse hanging in the air.")]
+        [SerializeField] float maxDeathAnimation = 0.9f;
+
         bool _active;
+        float _deathHandoffAt;
+        DamageInfo _pendingDeath;
         Vector3 _spawnPosition;
         Quaternion _spawnRotation;
 
@@ -56,6 +64,9 @@ namespace ArenaFps.Combat
 
         void Update()
         {
+            if (_deathHandoffAt > 0f && Time.time >= _deathHandoffAt)
+                HandOffToPhysics(_pendingDeath);
+
             if (_active)
                 return;
             if (rig == null)
@@ -137,16 +148,65 @@ namespace ArenaFps.Combat
             if (pose != null)
                 pose.enabled = false;
 
+            var origin = info.Point == Vector3.zero ? transform.position + Vector3.up * 1.2f : info.Point;
+            ImpactFx.Instance.DeathBurst(origin, info.Direction);
+            Sfx3D.Instance.Play(Sfx.Death, transform.position + Vector3.up * 1.4f, 0.8f, 0.1f, 45f);
+            Invoke(nameof(PlayBodyFall), 0.35f);
+
+            float lead = DeathAnimationLead(info);
+            if (lead > 0f)
+            {
+                _pendingDeath = info;
+                _deathHandoffAt = Time.time + lead;
+                return;
+            }
+
+            HandOffToPhysics(info);
+        }
+
+        /// <summary>
+        /// How long to let a death clip play before physics takes the body.
+        ///
+        /// The animation is only ever a lead-in: it sells the moment of being hit, which raw
+        /// physics does badly, and then hands over so the corpse still settles against the actual
+        /// geometry. Handing over partway through rather than at the end is deliberate — the last
+        /// third of a Mixamo death is the body already flat and still, and physics does that better.
+        ///
+        /// A heavy hit skips the clip entirely. Nobody crumples politely after a direct rocket, and
+        /// an animation would swallow the impulse that makes the kill read as heavy.
+        /// </summary>
+        float DeathAnimationLead(DamageInfo info)
+        {
+            if (info.Amount >= heavyDeathThreshold)
+                return 0f;
+
+            var soldier = GetComponent<SoldierAnimator>();
+            if (soldier == null || !soldier.isActiveAndEnabled)
+                return 0f;
+
+            float length = soldier.PlayDeath();
+            return length <= 0f ? 0f : Mathf.Min(length * 0.55f, maxDeathAnimation);
+        }
+
+        void HandOffToPhysics(DamageInfo info)
+        {
+            _deathHandoffAt = 0f;
+
+            // The animator rewrites every bone in LateUpdate; leaving it running would stamp a walk
+            // cycle back over the corpse each frame.
+            var soldier = GetComponent<SoldierAnimator>();
+            if (soldier != null)
+                soldier.enabled = false;
+
+            var animator = GetComponentInChildren<Animator>();
+            if (animator != null)
+                animator.enabled = false;
+
             if (rig == null)
                 return;
 
             GoDynamic();
             ApplyDeathImpulse(info);
-
-            var origin = info.Point == Vector3.zero ? transform.position + Vector3.up * 1.2f : info.Point;
-            ImpactFx.Instance.DeathBurst(origin, info.Direction);
-            Sfx3D.Instance.Play(Sfx.Death, transform.position + Vector3.up * 1.4f, 0.8f, 0.1f, 45f);
-            Invoke(nameof(PlayBodyFall), 0.35f);
         }
 
         public void Activate(Vector3 impulse, Vector3 hitPoint)
@@ -240,6 +300,11 @@ namespace ArenaFps.Combat
 
         public void ResetPose()
         {
+            // A respawn during the animated lead-in must not let the queued handoff fire afterwards
+            // and ragdoll a bot that is already back on its feet.
+            CancelInvoke(nameof(PlayBodyFall));
+            _deathHandoffAt = 0f;
+
             if (rig != null)
             {
                 foreach (var bone in rig.Bones)
@@ -274,6 +339,10 @@ namespace ArenaFps.Combat
             var pose = GetComponent<BotPoseDriver>();
             if (pose != null)
                 pose.enabled = true;
+
+            var soldier = GetComponent<SoldierAnimator>();
+            if (soldier != null)
+                soldier.enabled = true;
 
             _active = false;
         }

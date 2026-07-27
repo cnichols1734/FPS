@@ -18,8 +18,16 @@ namespace ArenaFps.Combat
         [SerializeField] float bobHeight = 0.035f;
         [SerializeField] float footstepVolume = 0.5f;
 
+        /// <summary>
+        /// When false, skip rewriting bone localRotations (skinned Mixamo / Animator owns the pose).
+        /// Footsteps, stagger scaling, aim bookkeeping still run.
+        /// </summary>
+        [SerializeField] bool driveBones = true;
+
         BotRig _rig;
         NavMeshAgent _agent;
+        Animator _animator;
+        SoldierAnimator _soldier;
 
         float _phase;
         int _strideSign;
@@ -31,10 +39,22 @@ namespace ArenaFps.Combat
         bool _hasAim;
         Vector3 _aimPoint;
 
+        public bool DriveBones
+        {
+            get => driveBones;
+            set => driveBones = value;
+        }
+
         void Awake()
         {
             _rig = GetComponent<BotRig>();
             _agent = GetComponent<NavMeshAgent>();
+            _animator = GetComponentInChildren<Animator>();
+            _soldier = GetComponent<SoldierAnimator>();
+            // A skinned humanoid is posed in muscle space by SoldierAnimator; twisting the same
+            // Mixamo bones from here as well would fight it and shear the mesh.
+            if (_soldier != null || (_animator != null && _animator.avatar != null && _animator.avatar.isHuman))
+                driveBones = false;
             _phase = Random.Range(0f, Mathf.PI * 2f);
             _breath = Random.Range(0f, Mathf.PI * 2f);
         }
@@ -43,13 +63,28 @@ namespace ArenaFps.Combat
         {
             _aimPoint = worldPoint;
             _hasAim = true;
+            _soldier?.SetAimTarget(worldPoint);
         }
 
-        public void ClearAim() => _hasAim = false;
+        public void ClearAim()
+        {
+            _hasAim = false;
+            _soldier?.ClearAim();
+        }
 
-        public void AddRecoil(float amount) => _recoil = Mathf.Min(1.4f, _recoil + amount);
+        public void AddRecoil(float amount)
+        {
+            _recoil = Mathf.Min(1.4f, _recoil + amount);
+            _soldier?.AddRecoil(amount);
+        }
 
-        public void AddStagger(float amount) => _stagger = Mathf.Min(1f, _stagger + amount);
+        public void AddStagger(float amount)
+        {
+            _stagger = Mathf.Min(1f, _stagger + amount);
+            _soldier?.AddStagger(amount);
+        }
+
+        public void PlayReload() => _soldier?.PlayReload();
 
         /// <summary>Stagger scales the bot's move speed, so sustained fire genuinely pins it down.</summary>
         public float SpeedScale => 1f - _stagger * 0.55f;
@@ -70,7 +105,16 @@ namespace ArenaFps.Combat
             _speed = Mathf.Lerp(_speed, target, 1f - Mathf.Exp(-9f * dt));
 
             float normalised = Mathf.Clamp01(_speed / 4.2f);
-            _phase += dt * strideFrequency * Mathf.PI * 2f * (0.6f + normalised * 1.5f);
+            if (_soldier != null && _soldier.HasHumanoid)
+            {
+                // Borrow the real gait clock so a step is heard when a boot actually lands.
+                _phase = _soldier.StridePhase;
+                normalised = _soldier.NormalisedSpeed;
+            }
+            else
+            {
+                _phase += dt * strideFrequency * Mathf.PI * 2f * (0.6f + normalised * 1.5f);
+            }
 
             float stride = Mathf.Sin(_phase);
             float swing = stride * strideAmplitude * normalised;
@@ -78,6 +122,12 @@ namespace ArenaFps.Combat
 
             ReportFootfall(stride, normalised);
             UpdateAimPitch(dt);
+
+            if (_animator != null)
+                _animator.speed = Mathf.Lerp(0.85f, 1.35f, normalised) * (1f - _stagger * 0.35f);
+
+            if (!driveBones)
+                return;
 
             // Legs: thigh swings, knee flexes on the forward half of the stride.
             Pose(Bone.ThighL, new Vector3(-swing, 0f, 0f));
@@ -100,8 +150,8 @@ namespace ArenaFps.Combat
 
             Pose(Bone.Head, new Vector3(_aimPitch * 0.5f - lean * 0.6f, 0f, 0f));
 
-            float bob = Mathf.Abs(lift) * bobHeight * normalised - _stagger * 0.045f;
-            _rig.RigRoot.localPosition = new Vector3(0f, bob, 0f);
+            float capsuleBob = Mathf.Abs(lift) * bobHeight * normalised - _stagger * 0.045f;
+            _rig.RigRoot.localPosition = new Vector3(0f, capsuleBob, 0f);
         }
 
         /// <summary>

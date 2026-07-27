@@ -67,5 +67,17 @@ namespace ArenaFps.Weapons
             recovery = 12.5f,
             recoveryDelay = 0.04f,
         };
+
+        /// <summary>5.56 carbine — snappier than the SCAR-H, still learnable.</summary>
+        public static RecoilPattern Carbine => new()
+        {
+            verticalFirst = 0.48f,
+            verticalSustained = 0.26f,
+            settleShots = 4,
+            horizontal = 0.22f,
+            jitter = 0.2f,
+            recovery = 11f,
+            recoveryDelay = 0.055f,
+        };
     }
 }

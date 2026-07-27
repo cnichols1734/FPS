@@ -11,7 +11,7 @@ namespace ArenaFps.Feedback
     /// </summary>
     public sealed class ImpactFx : MonoBehaviour
     {
-        const int ParticleCapacity = 1400;
+        const int ParticleCapacity = 1800;
         const int DecalCapacity = 160;
         const int CasingCapacity = 24;
 
@@ -27,9 +27,13 @@ namespace ArenaFps.Feedback
             get
             {
                 if (_instance != null)
+                {
+                    _instance.EnsureBuilt();
                     return _instance;
+                }
                 var go = new GameObject("__ImpactFx");
                 _instance = go.AddComponent<ImpactFx>();
+                _instance.EnsureBuilt();
                 return _instance;
             }
         }
@@ -42,18 +46,29 @@ namespace ArenaFps.Feedback
                 return;
             }
             _instance = this;
+            EnsureBuilt();
+        }
 
-            var particleGo = new GameObject("ParticleBatch");
-            particleGo.transform.SetParent(transform, false);
-            _particles = particleGo.AddComponent<ParticleBatch>();
-            _particles.Initialise(ParticleCapacity, FxAtlas.AdditiveMaterial, "FxParticles");
+        void EnsureBuilt()
+        {
+            if (_particles == null)
+            {
+                var particleGo = new GameObject("ParticleBatch");
+                particleGo.transform.SetParent(transform, false);
+                _particles = particleGo.AddComponent<ParticleBatch>();
+                _particles.Initialise(ParticleCapacity, FxAtlas.AdditiveMaterial, "FxParticles");
+            }
 
-            var decalGo = new GameObject("DecalBatch");
-            decalGo.transform.SetParent(transform, false);
-            _decals = decalGo.AddComponent<DecalBatch>();
-            _decals.Initialise(DecalCapacity, FxAtlas.DecalMaterial, "FxDecals");
+            if (_decals == null)
+            {
+                var decalGo = new GameObject("DecalBatch");
+                decalGo.transform.SetParent(transform, false);
+                _decals = decalGo.AddComponent<DecalBatch>();
+                _decals.Initialise(DecalCapacity, FxAtlas.DecalMaterial, "FxDecals");
+            }
 
-            BuildCasingPool();
+            if (_casings == null)
+                BuildCasingPool();
         }
 
         void OnDestroy()
@@ -73,27 +88,31 @@ namespace ArenaFps.Feedback
             {
                 case SurfaceKind.MetalThin:
                 case SurfaceKind.MetalThick:
-                    Sparks(point, normal, direction, 10, 1f);
-                    Dust(point, normal, 2, 0.16f, new Color(0.5f, 0.5f, 0.52f, 0.5f));
+                    ImpactCore(point, normal, new Color(3.4f, 2.35f, 1.1f, 1f), 0.5f);
+                    Sparks(point, normal, direction, 22, 1.35f);
+                    Dust(point, normal, 3, 0.18f, new Color(0.55f, 0.56f, 0.6f, 0.42f));
                     _decals.Add(point, normal, Random.Range(0.09f, 0.13f), FxAtlas.HoleMetal, Color.white, 22f);
                     break;
 
                 case SurfaceKind.Wood:
-                    Chips(point, normal, direction, 7, new Color(0.55f, 0.38f, 0.2f));
-                    Dust(point, normal, 3, 0.22f, new Color(0.45f, 0.34f, 0.22f, 0.6f));
+                    ImpactCore(point, normal, new Color(1.5f, 0.82f, 0.32f, 0.9f), 0.34f);
+                    Chips(point, normal, direction, 11, new Color(0.58f, 0.38f, 0.19f));
+                    Dust(point, normal, 5, 0.26f, new Color(0.46f, 0.34f, 0.22f, 0.68f));
                     _decals.Add(point, normal, Random.Range(0.1f, 0.15f), FxAtlas.HoleConcrete, new Color(0.7f, 0.55f, 0.4f), 22f);
                     break;
 
                 case SurfaceKind.Drywall:
-                    Dust(point, normal, 7, 0.5f, new Color(0.92f, 0.9f, 0.86f, 0.75f));
-                    Chips(point, normal, direction, 4, new Color(0.88f, 0.86f, 0.82f));
+                    ImpactCore(point, normal, new Color(1.15f, 1.05f, 0.82f, 0.65f), 0.28f);
+                    Dust(point, normal, 11, 0.56f, new Color(0.94f, 0.92f, 0.87f, 0.82f));
+                    Chips(point, normal, direction, 6, new Color(0.88f, 0.86f, 0.82f));
                     _decals.Add(point, normal, Random.Range(0.14f, 0.2f), FxAtlas.HoleConcrete, new Color(0.95f, 0.94f, 0.9f), 22f);
                     break;
 
                 default:
-                    Dust(point, normal, 5, 0.34f, new Color(0.66f, 0.64f, 0.6f, 0.7f));
-                    Chips(point, normal, direction, 5, new Color(0.5f, 0.49f, 0.47f));
-                    Sparks(point, normal, direction, 2, 0.45f);
+                    ImpactCore(point, normal, new Color(1.7f, 1.28f, 0.62f, 0.75f), 0.36f);
+                    Dust(point, normal, 9, 0.42f, new Color(0.68f, 0.66f, 0.6f, 0.78f));
+                    Chips(point, normal, direction, 9, new Color(0.5f, 0.49f, 0.46f));
+                    Sparks(point, normal, direction, 4, 0.58f);
                     _decals.Add(point, normal, Random.Range(0.11f, 0.16f), FxAtlas.HoleConcrete, Color.white, 22f);
                     break;
             }
@@ -196,9 +215,10 @@ namespace ArenaFps.Feedback
         {
             var dir = direction.normalized;
             float scale = headshot ? 1.7f : 1f;
+            ImpactCore(point, normal, new Color(1.55f, 0.08f, 0.045f, 0.9f), 0.36f * scale);
 
             // Spray cone continuing through the target — the read that a round actually landed.
-            int sprayCount = headshot ? 20 : 12;
+            int sprayCount = headshot ? 26 : 16;
             for (int i = 0; i < sprayCount; i++)
             {
                 var jitter = Random.insideUnitSphere * 0.55f;
@@ -209,15 +229,15 @@ namespace ArenaFps.Feedback
                     Random.Range(0.28f, 0.55f),
                     Random.Range(0.035f, 0.075f) * scale,
                     0.01f,
-                    new Color(0.62f, 0.045f, 0.03f),
-                    new Color(0.22f, 0.01f, 0.01f, 0f),
+                    new Color(0.72f, 0.035f, 0.026f),
+                    new Color(0.18f, 0.006f, 0.006f, 0f),
                     FxAtlas.Dot,
                     gravity: 9f,
                     drag: 2.2f);
             }
 
             // Mist puff at the entry point reads instantly even at 30 m.
-            for (int i = 0; i < (headshot ? 6 : 4); i++)
+            for (int i = 0; i < (headshot ? 9 : 6); i++)
             {
                 _particles.Spawn(
                     point + Random.insideUnitSphere * 0.05f,
@@ -225,8 +245,8 @@ namespace ArenaFps.Feedback
                     Random.Range(0.18f, 0.32f),
                     0.1f * scale,
                     0.34f * scale,
-                    new Color(0.5f, 0.04f, 0.03f, 0.8f),
-                    new Color(0.3f, 0.03f, 0.02f, 0f),
+                    new Color(0.58f, 0.045f, 0.035f, 0.84f),
+                    new Color(0.26f, 0.018f, 0.014f, 0f),
                     FxAtlas.Smoke,
                     drag: 3.5f);
             }
@@ -278,62 +298,91 @@ namespace ArenaFps.Feedback
 
             // A travelling streak rather than an instant line: reads as a round in flight and
             // gives the eye something to follow toward the target.
-            float length = Mathf.Min(distance, 9f);
+            float length = Mathf.Min(distance, 14f);
             float life = Mathf.Clamp(distance / speed, 0.03f, 0.4f);
             _particles.Spawn(
                 from + dir * length * 0.5f,
                 dir * speed,
                 life,
-                width,
                 width * 0.55f,
-                new Color(1f, 0.92f, 0.68f),
-                new Color(1f, 0.5f, 0.18f, 0f),
+                width * 0.24f,
+                new Color(4.2f, 3.15f, 1.55f, 1f),
+                new Color(1.8f, 0.58f, 0.18f, 0f),
                 FxAtlas.Streak,
                 ParticleShape.Streak,
                 length: length,
+                axis: dir);
+            _particles.Spawn(
+                from + dir * length * 0.46f,
+                dir * (speed * 0.92f),
+                life * 0.85f,
+                width * 2.2f,
+                width * 0.7f,
+                new Color(1.45f, 0.92f, 0.38f, 0.42f),
+                new Color(0.9f, 0.25f, 0.08f, 0f),
+                FxAtlas.Streak,
+                ParticleShape.Streak,
+                length: length * 0.82f,
                 axis: dir);
         }
 
         public void MuzzleFlash(Vector3 position, Vector3 forward, float scale = 1f)
         {
             _particles.Spawn(
-                position + forward * 0.06f,
-                forward * 1.2f,
-                0.045f,
-                0.38f * scale,
-                0.5f * scale,
-                new Color(1f, 0.86f, 0.55f),
-                new Color(1f, 0.45f, 0.12f, 0f),
+                position + forward * 0.08f,
+                forward * 1.6f,
+                0.052f,
+                0.28f * scale,
+                0.075f * scale,
+                new Color(2.8f, 1.85f, 0.72f, 0.86f),
+                new Color(0.7f, 0.18f, 0.04f, 0f),
                 FxAtlas.Star,
                 spin: Random.Range(-14f, 14f));
 
-            // Burning gas cone.
-            for (int i = 0; i < 4; i++)
+            _particles.Spawn(
+                position + forward * 0.28f,
+                forward * 9f,
+                0.045f,
+                0.085f * scale,
+                0.025f * scale,
+                new Color(2.6f, 1.35f, 0.42f, 0.72f),
+                new Color(0.65f, 0.16f, 0.035f, 0f),
+                FxAtlas.Streak,
+                ParticleShape.Streak,
+                length: 0.48f * scale,
+                axis: forward);
+
+            // Burning gas beads inside the flash give the burst texture when firing full-auto.
+            for (int i = 0; i < 6; i++)
             {
                 _particles.Spawn(
                     position + forward * Random.Range(0.04f, 0.16f),
-                    (forward + Random.insideUnitSphere * 0.35f) * Random.Range(1.5f, 4.5f),
-                    Random.Range(0.06f, 0.13f),
-                    0.05f * scale,
-                    0.16f * scale,
-                    new Color(1f, 0.7f, 0.3f, 0.9f),
-                    new Color(0.5f, 0.2f, 0.08f, 0f),
+                    (forward + Random.insideUnitSphere * 0.32f) * Random.Range(2.2f, 6.2f),
+                    Random.Range(0.045f, 0.11f),
+                    Random.Range(0.035f, 0.07f) * scale,
+                    Random.Range(0.1f, 0.19f) * scale,
+                    new Color(1.9f, 0.92f, 0.28f, 0.72f),
+                    new Color(0.45f, 0.11f, 0.025f, 0f),
                     FxAtlas.Dot,
                     drag: 6f);
             }
 
             // Smoke that lingers just long enough to be noticed.
-            _particles.Spawn(
-                position + forward * 0.12f,
-                forward * 1.1f + Vector3.up * 0.35f,
-                Random.Range(0.3f, 0.5f),
-                0.08f * scale,
-                0.42f * scale,
-                new Color(0.32f, 0.3f, 0.28f, 0.32f),
-                new Color(0.3f, 0.3f, 0.3f, 0f),
-                FxAtlas.Smoke,
-                drag: 2.6f,
-                spin: Random.Range(-2f, 2f));
+            for (int i = 0; i < 2; i++)
+            {
+                _particles.Spawn(
+                    position + forward * Random.Range(0.1f, 0.22f),
+                    forward * Random.Range(0.8f, 1.5f) + Vector3.up * Random.Range(0.22f, 0.55f) + Random.insideUnitSphere * 0.18f,
+                    Random.Range(0.34f, 0.58f),
+                    Random.Range(0.06f, 0.1f) * scale,
+                    Random.Range(0.36f, 0.54f) * scale,
+                    new Color(0.34f, 0.32f, 0.28f, 0.3f),
+                    new Color(0.27f, 0.27f, 0.25f, 0f),
+                    FxAtlas.Smoke,
+                    gravity: -0.12f,
+                    drag: 2.4f,
+                    spin: Random.Range(-2.4f, 2.4f));
+            }
         }
 
         /// <summary>Near-miss crack. Only fires when a round passes close enough to matter.</summary>
@@ -349,29 +398,69 @@ namespace ArenaFps.Feedback
             var casing = _casings[_nextCasing];
             _nextCasing = (_nextCasing + 1) % _casings.Length;
             casing.Eject(position, (right * 2.6f + up * 1.9f + Random.insideUnitSphere * 0.7f) + inherited);
+
+            var puffDirection = (right * 0.55f + up * 0.35f + Random.insideUnitSphere * 0.16f).normalized;
+            _particles.Spawn(
+                position + puffDirection * 0.035f,
+                puffDirection * Random.Range(0.55f, 1.1f) + inherited * 0.04f,
+                Random.Range(0.18f, 0.32f),
+                0.035f,
+                Random.Range(0.16f, 0.24f),
+                new Color(0.38f, 0.35f, 0.29f, 0.28f),
+                new Color(0.22f, 0.22f, 0.2f, 0f),
+                FxAtlas.Smoke,
+                gravity: -0.08f,
+                drag: 3.2f,
+                spin: Random.Range(-3f, 3f));
         }
 
         // ---------------------------------------------------------------- emitters
+
+        void ImpactCore(Vector3 point, Vector3 normal, Color color, float scale)
+        {
+            var hotFade = new Color(color.r * 0.35f, color.g * 0.28f, color.b * 0.22f, 0f);
+            _particles.Spawn(
+                point + normal * 0.018f,
+                normal * Random.Range(0.2f, 0.7f),
+                Random.Range(0.045f, 0.075f),
+                0.12f * scale,
+                0.035f * scale,
+                color,
+                hotFade,
+                FxAtlas.Dot,
+                drag: 9f);
+
+            _particles.Spawn(
+                point + normal * 0.024f,
+                normal * Random.Range(0.1f, 0.35f),
+                Random.Range(0.055f, 0.095f),
+                0.2f * scale,
+                0.045f * scale,
+                new Color(color.r * 0.75f, color.g * 0.6f, color.b * 0.45f, color.a * 0.75f),
+                Color.clear,
+                FxAtlas.Star,
+                spin: Random.Range(-10f, 10f));
+        }
 
         void Sparks(Vector3 point, Vector3 normal, Vector3 direction, int count, float energy)
         {
             var reflected = Vector3.Reflect(direction.normalized, normal);
             for (int i = 0; i < count; i++)
             {
-                var velocity = (reflected + Random.insideUnitSphere * 0.75f).normalized * Random.Range(4f, 13f) * energy;
+                var velocity = (reflected + normal * 0.25f + Random.insideUnitSphere * 0.78f).normalized * Random.Range(5f, 17f) * energy;
                 _particles.Spawn(
                     point,
                     velocity,
-                    Random.Range(0.12f, 0.34f),
+                    Random.Range(0.1f, 0.32f),
                     Random.Range(0.012f, 0.026f),
                     0.004f,
-                    new Color(1f, 0.88f, 0.55f),
-                    new Color(1f, 0.28f, 0.06f, 0f),
+                    new Color(3.2f, 2.25f, 0.95f, 1f),
+                    new Color(1.2f, 0.3f, 0.05f, 0f),
                     FxAtlas.Streak,
                     ParticleShape.Streak,
-                    gravity: 14f,
-                    drag: 1.1f,
-                    length: Random.Range(0.12f, 0.3f) * energy,
+                    gravity: 16f,
+                    drag: 1.25f,
+                    length: Random.Range(0.18f, 0.44f) * energy,
                     axis: velocity);
             }
         }
@@ -382,15 +471,15 @@ namespace ArenaFps.Feedback
             {
                 _particles.Spawn(
                     point + Random.insideUnitSphere * 0.03f,
-                    (normal + Random.insideUnitSphere * 0.6f) * Random.Range(0.7f, 2.6f),
-                    Random.Range(0.35f, 0.75f),
+                    (normal + Random.insideUnitSphere * 0.7f) * Random.Range(0.9f, 3.1f),
+                    Random.Range(0.42f, 0.9f),
                     size * 0.35f,
-                    size * Random.Range(1.5f, 2.6f),
+                    size * Random.Range(1.7f, 3.1f),
                     color,
                     new Color(color.r, color.g, color.b, 0f),
                     FxAtlas.Smoke,
                     gravity: -0.6f,
-                    drag: 2.4f,
+                    drag: 2.15f,
                     spin: Random.Range(-1.6f, 1.6f));
             }
         }
@@ -400,7 +489,7 @@ namespace ArenaFps.Feedback
             var reflected = Vector3.Reflect(direction.normalized, normal);
             for (int i = 0; i < count; i++)
             {
-                var velocity = (reflected * 0.6f + normal * 0.7f + Random.insideUnitSphere).normalized * Random.Range(2.5f, 7f);
+                var velocity = (reflected * 0.6f + normal * 0.8f + Random.insideUnitSphere).normalized * Random.Range(3f, 8.5f);
                 _particles.Spawn(
                     point,
                     velocity,

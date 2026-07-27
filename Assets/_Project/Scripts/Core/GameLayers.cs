@@ -25,8 +25,8 @@ namespace ArenaFps.Core
         /// <summary>What a player bullet may strike: world geometry and character limbs.</summary>
         public static readonly int PlayerBulletMask = WorldMask | HitboxMask;
 
-        /// <summary>What a bot bullet may strike: world geometry and the player capsule.</summary>
-        public static readonly int BotBulletMask = WorldMask | PlayerMask;
+        /// <summary>What a bot bullet may strike: world, player capsule, and limb hitboxes (TDM).</summary>
+        public static readonly int BotBulletMask = WorldMask | PlayerMask | HitboxMask;
 
         /// <summary>Sight and cover queries only care about static world geometry.</summary>
         public static readonly int SightMask = WorldMask;

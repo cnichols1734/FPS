@@ -67,6 +67,12 @@ namespace ArenaFps.Weapons
         float _slide;
         float _landPunch;
 
+        // Optional gun-root zoom that lives only at hip (ACR). ADS solves at scale 1, then this
+        // blends the authored hip zoom back in when you drop the sight.
+        Transform _hipFrame;
+        Vector3 _hipFrameBasePos;
+        float _hipFrameScale = 1f;
+
         public void Bind(FpsController controller)
         {
             if (_controller != null)
@@ -128,6 +134,7 @@ namespace ArenaFps.Weapons
         {
             // ScarHViewmodelBuilder owns the camera pocket on its wrapper. WeaponRoot stays put
             // so we do not stack a second translation and shove the gun downrange.
+            ClearAuthoredHipFraming();
             hipOffset = Vector3.zero;
             adsOffset = new Vector3(0f, 0.01f, -0.06f);
             adsTilt = Vector3.zero;
@@ -138,10 +145,67 @@ namespace ArenaFps.Weapons
         }
 
         /// <summary>
+        /// ACR hip pocket/zoom after ADS has been solved on the pure Head_Cam pose. WeaponRoot
+        /// carries the drop; the gun root carries hip-only scale that eases out as ADS rises.
+        /// </summary>
+        public void ConfigureAuthoredHipFraming(Transform gunRoot, Vector3 hipPocket, float hipZoomScale)
+        {
+            hipOffset = hipPocket;
+            _positionOffset = hipOffset;
+            transform.localPosition = hipOffset;
+
+            _hipFrame = gunRoot;
+            _hipFrameBasePos = gunRoot != null ? gunRoot.localPosition : Vector3.zero;
+            _hipFrameScale = Mathf.Max(1e-3f, hipZoomScale);
+            ApplyHipFrame(0f);
+        }
+
+        public void ClearAuthoredHipFraming()
+        {
+            if (_hipFrame != null)
+            {
+                _hipFrame.localPosition = _hipFrameBasePos;
+                _hipFrame.localScale = Vector3.one;
+            }
+
+            _hipFrame = null;
+            _hipFrameScale = 1f;
+            // Scar (and ADS calibration) expect WeaponRoot identity under the gun wrapper.
+            hipOffset = Vector3.zero;
+            _positionOffset = hipOffset;
+            transform.localPosition = hipOffset;
+        }
+
+        void ApplyHipFrame(float ads)
+        {
+            if (_hipFrame == null)
+                return;
+
+            float a = Smooth(ads);
+            _hipFrame.localPosition = _hipFrameBasePos;
+            _hipFrame.localScale = Vector3.one * Mathf.Lerp(_hipFrameScale, 1f, a);
+        }
+
+        /// <summary>
         /// Solves the ADS pose so the rear ghost ring lands on the camera centreline at the
         /// configured eye relief, whatever pivot the imported gun happens to have.
         /// </summary>
         public void ConfigureIronSightAds(Transform sightAlign, Transform cameraPivot)
+            => ConfigureIronSightAds(sightAlign, cameraPivot, adsSightDistance, adsVerticalBias);
+
+        public void ConfigureIronSightAds(Transform sightAlign, Transform cameraPivot, float eyeRelief)
+            => ConfigureIronSightAds(sightAlign, cameraPivot, eyeRelief, adsVerticalBias);
+
+        /// <param name="eyeRelief">
+        /// Distance in front of the eye to park the sight plane. Iron sights want ~0.18;
+        /// holos want a tighter picture (~0.16) so the window fills the centre.
+        /// </param>
+        /// <param name="verticalBias">
+        /// Drops the sight below screen centre for iron-sight silhouette. Pass 0 for optics so
+        /// the hologram reticle lands on the HUD crosshair.
+        /// </param>
+        public void ConfigureIronSightAds(Transform sightAlign, Transform cameraPivot,
+                                          float eyeRelief, float verticalBias)
         {
             if (sightAlign == null)
                 return;
@@ -150,8 +214,10 @@ namespace ArenaFps.Weapons
             if (eye == null)
                 return;
 
-            // Where we want the ring: straight down the barrel axis from the eye, a hair low.
-            Vector3 desired = eye.TransformPoint(new Vector3(0f, -adsVerticalBias, adsSightDistance));
+            float relief = Mathf.Max(0.05f, eyeRelief);
+
+            // Exact camera centreline — HUD crosshair and hitscan both live here.
+            Vector3 desired = eye.TransformPoint(new Vector3(0f, -verticalBias, relief));
 
             // adsOffset is a localPosition, so it has to be expressed in WeaponRoot's parent
             // space — which is not necessarily the eye's space.
@@ -168,24 +234,82 @@ namespace ArenaFps.Weapons
         }
 
         /// <summary>
+        /// Fine-tunes <see cref="adsOffset"/> so a measured world point (optic reticle) lands on
+        /// the camera viewport centre — the same pixel the HUD crosshair and hitscan use.
+        /// </summary>
+        public void CalibrateAdsToViewportCenter(Transform cameraPivot, System.Func<Vector3> measureWorldPoint)
+            => CalibrateAdsToViewportCenter(cameraPivot, measureWorldPoint, Vector2.zero);
+
+        /// <param name="viewportBias">
+        /// Extra target offset in viewport space. Use when the glowing reticle is a hair off the
+        /// measured mesh UV centre (texture packing quirk).
+        /// </param>
+        public void CalibrateAdsToViewportCenter(Transform cameraPivot, System.Func<Vector3> measureWorldPoint,
+                                                 Vector2 viewportBias)
+        {
+            if (measureWorldPoint == null)
+                return;
+
+            var eyeCam = ResolveEyeCamera(cameraPivot);
+            if (eyeCam == null)
+                return;
+
+            var eye = eyeCam.transform;
+            var parent = transform.parent;
+            var savedPos = transform.localPosition;
+            var savedRot = transform.localRotation;
+            var target = new Vector2(0.5f, 0.5f) + viewportBias;
+
+            for (int i = 0; i < 5; i++)
+            {
+                transform.localPosition = adsOffset;
+                transform.localRotation = Quaternion.identity;
+
+                Vector3 world = measureWorldPoint();
+                Vector3 vp = eyeCam.WorldToViewportPoint(world);
+                if (vp.z <= 0.01f)
+                    break;
+
+                var err = new Vector2(vp.x - target.x, vp.y - target.y);
+                if (err.sqrMagnitude < 1e-8f)
+                    break;
+
+                float dist = Mathf.Max(0.05f, Vector3.Dot(world - eye.position, eye.forward));
+                float halfH = dist * Mathf.Tan(eyeCam.fieldOfView * 0.5f * Mathf.Deg2Rad);
+                float halfW = halfH * eyeCam.aspect;
+                Vector3 worldNudge = eye.right * (-err.x * 2f * halfW) + eye.up * (-err.y * 2f * halfH);
+                Vector3 parentNudge = parent != null ? parent.InverseTransformVector(worldNudge) : worldNudge;
+                adsOffset += parentNudge;
+            }
+
+            transform.localPosition = savedPos;
+            transform.localRotation = savedRot;
+        }
+
+        /// <summary>
         /// The supplied pivot may be the yaw/pitch pivot or the camera itself depending on how
         /// the player was assembled, and the ADS solve only works off the real eye.
         /// </summary>
         static Transform ResolveEye(Transform cameraPivot)
         {
+            var cam = ResolveEyeCamera(cameraPivot);
+            return cam != null ? cam.transform : cameraPivot;
+        }
+
+        static Camera ResolveEyeCamera(Transform cameraPivot)
+        {
             if (cameraPivot != null)
             {
                 var own = cameraPivot.GetComponent<Camera>();
                 if (own != null)
-                    return own.transform;
+                    return own;
 
                 var child = cameraPivot.GetComponentInChildren<Camera>();
                 if (child != null)
-                    return child.transform;
+                    return child;
             }
 
-            var main = Camera.main;
-            return main != null ? main.transform : cameraPivot;
+            return Camera.main;
         }
 
         void LateUpdate()
@@ -223,6 +347,7 @@ namespace ArenaFps.Weapons
 
             transform.localPosition = _positionOffset;
             transform.localRotation = Quaternion.Euler(_rotationOffset);
+            ApplyHipFrame(_ads);
         }
 
         void GatherSway(float dt)

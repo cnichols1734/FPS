@@ -23,7 +23,7 @@ namespace ArenaFps.Editor
         static EnsureFxShaders() => EditorApplication.delayCall += Apply;
 
         [MenuItem("Arena FPS/Ensure FX Shaders Included")]
-        static void Apply()
+        public static void Apply()
         {
             var settings = AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/GraphicsSettings.asset");
             if (settings == null || settings.Length == 0)

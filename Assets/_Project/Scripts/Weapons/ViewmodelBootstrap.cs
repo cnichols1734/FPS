@@ -26,19 +26,40 @@ namespace ArenaFps.Weapons
 
             // WeaponController normally builds this in Awake. Rebuilding would throw away a solved
             // pose and a live playable graph, so only step in when nothing got built.
-            var gun = weaponRoot.Find(ScarHViewmodelBuilder.RootName);
+            var gun = weaponRoot.Find(ScarHViewmodelBuilder.RootName)
+                      ?? weaponRoot.Find(AcrViewmodelBuilder.RootName);
             if (gun != null)
                 return;
 
-            gun = ScarHViewmodelBuilder.Ensure(weaponRoot);
             var motion = weaponRoot.GetComponent<ViewmodelMotion>()
                          ?? weaponRoot.gameObject.AddComponent<ViewmodelMotion>();
             motion.Bind(fps);
+            // Seat against a zeroed WeaponRoot — same order as WeaponController.Awake.
             motion.ConfigureAuthoredFpsPose();
 
-            var sight = ScarHViewmodelBuilder.FindDeep(gun, "SightAlign");
+            gun = weapon.Slot == WeaponController.WeaponSlot.Carbine
+                ? AcrViewmodelBuilder.Ensure(weaponRoot)
+                : ScarHViewmodelBuilder.Ensure(weaponRoot);
+
+            var sight = ScarHViewmodelBuilder.FindDeep(gun, "SightAlign")
+                        ?? AcrViewmodelBuilder.FindDeep(gun, "SightAlign");
             if (sight != null && fps.CameraPivot != null)
-                motion.ConfigureIronSightAds(sight, fps.CameraPivot);
+            {
+                if (weapon.Slot == WeaponController.WeaponSlot.Carbine)
+                {
+                    motion.ConfigureIronSightAds(sight, fps.CameraPivot, 0.16f, 0f);
+                    motion.CalibrateAdsToViewportCenter(fps.CameraPivot, () =>
+                        AcrViewmodelBuilder.TryMeasureReticleWorld(gun, out var point)
+                            ? point
+                            : sight.position);
+                    motion.ConfigureAuthoredHipFraming(
+                        gun, AcrViewmodelBuilder.HipPocket, AcrViewmodelBuilder.HipZoomScale);
+                }
+                else
+                {
+                    motion.ConfigureIronSightAds(sight, fps.CameraPivot);
+                }
+            }
 
             weapon.RefreshViewmodelAnchors();
 

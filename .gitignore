@@ -61,3 +61,11 @@ unity-*.log
 
 # Oversized source archives (GitHub 100MB hard limit)
 animated-fps-hands-rifle-animation-pack.zip
+
+# Local import / research scratch (never ship)
+_import_tmp/
+_research/
+
+# Source character archives (imported assets live under Assets/)
+black-squad-soldier-character.zip
+free-military-soldier-rigged.zip

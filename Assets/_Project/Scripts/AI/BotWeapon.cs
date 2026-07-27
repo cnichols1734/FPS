@@ -25,6 +25,11 @@ namespace ArenaFps.AI
         [SerializeField] Vector2Int burstLength = new Vector2Int(3, 6);
         [SerializeField] Vector2 burstRest = new Vector2(0.45f, 1.1f);
 
+        [Header("Magazine")]
+        [Tooltip("A visible reload is a window the player can push into, so bots run dry on purpose.")]
+        [SerializeField] int magazineSize = 30;
+        [SerializeField] float reloadSeconds = 2.2f;
+
         [Header("Presentation")]
         [SerializeField] float nearMissRadius = 2.2f;
 
@@ -37,6 +42,7 @@ namespace ArenaFps.AI
         float _nextShot;
         float _restUntil;
         int _remainingInBurst;
+        int _roundsLeft;
 
         public float Damage => damage;
         public float Range => range;
@@ -46,6 +52,7 @@ namespace ArenaFps.AI
             _pose = GetComponent<BotPoseDriver>();
             _self = GetComponent<Damageable>();
             _remainingInBurst = Random.Range(burstLength.x, burstLength.y + 1);
+            _roundsLeft = magazineSize;
             ResolveMuzzle();
         }
 
@@ -94,6 +101,13 @@ namespace ArenaFps.AI
             {
                 _remainingInBurst = Random.Range(burstLength.x, burstLength.y + 1);
                 _restUntil = Time.time + Random.Range(burstRest.x, burstRest.y);
+            }
+
+            if (--_roundsLeft <= 0)
+            {
+                _roundsLeft = magazineSize;
+                _restUntil = Time.time + reloadSeconds;
+                _pose?.PlayReload();
             }
 
             var origin = _muzzle.position;

@@ -14,6 +14,14 @@ namespace ArenaFps.Player
     [RequireComponent(typeof(CharacterController))]
     public sealed class FpsController : MonoBehaviour
     {
+        public enum GamepadLookCurve
+        {
+            /// <summary>Apex Classic: dampened near centre for micro-aim, full rate at the rim.</summary>
+            Classic = 0,
+            /// <summary>1:1 stick-to-turn mapping. Snappier tracking, less forgiveness.</summary>
+            Linear = 1,
+        }
+
         [Header("Move")]
         [SerializeField] float walkSpeed = 4.6f;
         [SerializeField] float sprintSpeed = 7.2f;
@@ -25,11 +33,11 @@ namespace ArenaFps.Player
         [Tooltip("Horizontal speed required to start a ground slide (~Apex 200hu).")]
         [SerializeField] float slideMinSpeed = 5.05f;
         [Tooltip("Burst added on slide enter when boost is off cooldown (~Apex 150hu).")]
-        [SerializeField] float slideBoost = 3.6f;
+        [SerializeField] float slideBoost = 2.8f;
         [SerializeField] float slideMaxSpeed = 10.2f;
         [SerializeField] float slideBoostCooldown = 2f;
         [Tooltip("Flat-ground speed bleed while sliding. Higher = shorter slides.")]
-        [SerializeField] float slideFriction = 4.1f;
+        [SerializeField] float slideFriction = 5.8f;
         [Tooltip("Drop out of slide into crouch-walk below this speed.")]
         [SerializeField] float slideEndSpeed = 3.35f;
         [Tooltip("How much look yaw redirects the slide (1 = slide follows camera fully).")]
@@ -39,7 +47,7 @@ namespace ArenaFps.Player
         [Tooltip("Extra bleed when pulling the stick against the slide.")]
         [SerializeField] float slideStickBrake = 6.5f;
         [Tooltip("Tiny speed feed when pushing with the slide.")]
-        [SerializeField] float slideStickPush = 1.4f;
+        [SerializeField] float slideStickPush = 0.6f;
         [Tooltip("Acceleration along downhill slopes while sliding.")]
         [SerializeField] float slideSlopeAccel = 16f;
         [Tooltip("Landing slide: min horizontal speed when crouch-latched on touchdown.")]
@@ -53,15 +61,28 @@ namespace ArenaFps.Player
         [SerializeField] float minPitch = -78f;
         [SerializeField] float maxPitch = 78f;
 
-        [Header("Gamepad Look")]
+        [Header("Gamepad Look (Apex-style ALC)")]
         [SerializeField] float gamepadLookSensitivity = 1f;
-        [SerializeField] float gamepadTurnRate = 210f;
-        [SerializeField] float gamepadPitchRate = 155f;
-        /// <summary>Above 1 gives fine control near centre and full rate at the edge.</summary>
-        [SerializeField] float gamepadResponseCurve = 2.1f;
-        /// <summary>Seconds of sustained deflection before the extra turn boost is fully in.</summary>
-        [SerializeField] float gamepadRampTime = 0.22f;
-        [SerializeField] float gamepadRampBoost = 0.85f;
+        [Tooltip("Hip-fire yaw degrees/sec at full stick after the response curve.")]
+        [SerializeField] float gamepadTurnRate = 240f;
+        [Tooltip("Hip-fire pitch degrees/sec at full stick after the response curve.")]
+        [SerializeField] float gamepadPitchRate = 170f;
+        [Tooltip("Classic = soft centre / fast edge (Apex default). Linear = 1:1 raw stick.")]
+        [SerializeField] GamepadLookCurve gamepadLookCurve = GamepadLookCurve.Classic;
+        [Tooltip("Classic exponent. ~2.2 matches Apex Classic: ~23% turn at half-stick.")]
+        [SerializeField] [Range(1f, 3.5f)] float gamepadClassicExponent = 2.2f;
+        [Tooltip("Where max look speed starts before the physical stick edge (Apex Outer Threshold).")]
+        [SerializeField] [Range(0f, 0.25f)] float gamepadOuterThreshold = 0.05f;
+        [Tooltip("Extra yaw deg/sec that ramps in near the stick edge (Apex Turning Extra Yaw).")]
+        [SerializeField] float gamepadExtraYaw = 180f;
+        [Tooltip("Extra pitch deg/sec near the stick edge. Keep lower than yaw for recoil control.")]
+        [SerializeField] float gamepadExtraPitch = 40f;
+        [Tooltip("Stick magnitude (post-curve remap) that starts counting toward Turning Extra.")]
+        [SerializeField] [Range(0.5f, 1f)] float gamepadExtraStart = 0.9f;
+        [Tooltip("Seconds at the outer rim before Turning Extra begins (Apex Ramp-up Delay).")]
+        [SerializeField] float gamepadRampDelay = 0f;
+        [Tooltip("Seconds for Turning Extra to reach full strength after the delay (Apex Ramp-up Time).")]
+        [SerializeField] float gamepadRampTime = 0.25f;
 
         [Header("Body")]
         [SerializeField] float standingHeight = 1.8f;
@@ -91,7 +112,7 @@ namespace ArenaFps.Player
         float _momentumCarryUntil;
         bool _mantling;
         Vector3 _mantleTarget;
-        float _stickRamp;
+        float _extraHoldTime;
         Vector3 _groundNormal = Vector3.up;
 
         public bool IsSliding => _sliding;
@@ -121,14 +142,44 @@ namespace ArenaFps.Player
             _aimAssist = GetComponent<AimAssist>();
             if (cameraPivot == null)
             {
+                // Prefer a real pivot: the camera's parent owns pitch, the camera itself must stay
+                // at the pivot origin. Falling back to the camera transform mis-wires look control.
                 var cam = GetComponentInChildren<Camera>();
                 if (cam != null)
-                    cameraPivot = cam.transform;
+                    cameraPivot = cam.transform.parent != null && cam.transform.parent != transform
+                        ? cam.transform.parent
+                        : cam.transform;
             }
+
+            EnforceCameraRig();
 
             _yaw = transform.eulerAngles.y;
             Cursor.lockState = CursorLockMode.Locked;
             Cursor.visible = false;
+        }
+
+        /// <summary>
+        /// Screenshot and level-dressing tooling has previously written a world-space pose onto the
+        /// still-parented camera, which bakes a multi-metre local offset into the scene and puts the
+        /// view on a boom arm far from the collision capsule. Snap it back before the first frame.
+        /// </summary>
+        void EnforceCameraRig()
+        {
+            if (cameraPivot == null)
+                return;
+
+            var cam = cameraPivot.GetComponentInChildren<Camera>();
+            if (cam == null || cam.transform == cameraPivot)
+                return;
+
+            var t = cam.transform;
+            if (t.localPosition.sqrMagnitude <= 0.0001f && Quaternion.Angle(t.localRotation, Quaternion.identity) <= 0.05f)
+                return;
+
+            Debug.LogWarning($"[FpsController] Camera rig was offset (local pos {t.localPosition}, rot {t.localEulerAngles}). " +
+                             "Resetting to the pivot origin — check for editor tooling writing world poses onto the gameplay camera.", this);
+            t.localPosition = Vector3.zero;
+            t.localRotation = Quaternion.identity;
         }
 
         void Update()
@@ -171,8 +222,15 @@ namespace ArenaFps.Player
             // L3 / Shift cancels a slide and pops you back into a sprint with carry speed.
             if (_sliding && sprintPressed)
                 CancelSlideIntoSprint(move, input);
+            else if (sprintPressed && _crouchLatched)
+            {
+                // Sprint always wins over crouch — tapping it stands you up so you can run.
+                _crouchLatched = false;
+                IsCrouching = false;
+            }
 
-            if (crouchPressed)
+            // Same-frame sprint+crouch: sprint already cleared the latch; don't re-duck.
+            if (crouchPressed && !sprintPressed)
                 HandleCrouchPress(wish, grounded);
 
             if (_sliding)
@@ -348,11 +406,15 @@ namespace ArenaFps.Player
             }
 
             // Flat friction with a short grace so the boost reads before the bleed starts.
-            float frictionScale = _slideAge < 0.12f ? 0.35f : 1f;
+            // Downhill eases friction so slopes still build speed; flats dump momentum faster.
+            float frictionScale = _slideAge < 0.1f ? 0.45f : 1f;
             if (grounded)
             {
+                float steep = Mathf.Clamp01(1f - _groundNormal.y);
+                float downhill = Mathf.Clamp01(slopeAlong) * steep;
+                float flatFriction = slideFriction * Mathf.Lerp(1f, 0.4f, downhill);
                 float uphill = Mathf.Max(0f, -slopeAlong);
-                _slideSpeed -= (slideFriction * frictionScale + uphill * slideSlopeAccel * 0.55f) * dt;
+                _slideSpeed -= (flatFriction * frictionScale + uphill * slideSlopeAccel * 0.55f) * dt;
             }
 
             _slideSpeed = Mathf.Clamp(_slideSpeed, 0f, slideMaxSpeed);
@@ -477,31 +539,68 @@ namespace ArenaFps.Player
         }
 
         /// <summary>
-        /// Console-style stick aim: an exponential response curve for precision near centre, then a
-        /// ramp that adds turn speed while the stick is held over so long sweeps do not crawl.
+        /// Apex ALC-style stick aim:
+        /// deadzone (Input System) → outer threshold → Classic/Linear response curve →
+        /// base yaw/pitch → Turning Extra that only ramps in at the rim.
         /// </summary>
         Vector2 StickLookDelta(Vector2 stick, float dt)
         {
             float magnitude = Mathf.Min(1f, stick.magnitude);
             if (magnitude <= 0.0001f)
             {
-                _stickRamp = 0f;
+                _extraHoldTime = 0f;
                 return Vector2.zero;
             }
 
-            _stickRamp = gamepadRampTime > 0f
-                ? Mathf.Min(1f, _stickRamp + dt / gamepadRampTime)
-                : 1f;
+            // Outer threshold: treat max look as reached before the physical stick edge.
+            float usable = Mathf.Max(0.01f, 1f - Mathf.Clamp01(gamepadOuterThreshold));
+            float t = Mathf.Clamp01(magnitude / usable);
 
-            float shaped = Mathf.Pow(magnitude, gamepadResponseCurve);
+            float shaped = ApplyLookCurve(t);
+            float extraBlend = TickTurningExtra(t, dt);
+
             Vector2 direction = stick / magnitude;
-            float rate = shaped * (1f + _stickRamp * gamepadRampBoost) * gamepadLookSensitivity * dt;
+            float yawRate = gamepadTurnRate + gamepadExtraYaw * extraBlend;
+            float pitchRate = gamepadPitchRate + gamepadExtraPitch * extraBlend;
+            float scale = shaped * gamepadLookSensitivity * dt;
 
             // Horizontal: stick right → look right. Vertical: inverted (stick up → look down).
             // Signs are hardcoded — serialized invert toggles were sticking across recompiles.
-            float yaw = direction.x * gamepadTurnRate;
-            float pitch = -direction.y * gamepadPitchRate;
-            return new Vector2(yaw, pitch) * rate;
+            return new Vector2(direction.x * yawRate, -direction.y * pitchRate) * scale;
+        }
+
+        float ApplyLookCurve(float t)
+        {
+            t = Mathf.Clamp01(t);
+            if (gamepadLookCurve == GamepadLookCurve.Linear || gamepadClassicExponent <= 1.001f)
+                return t;
+
+            // Classic / exponential: half-stick ≈ 0.5^2.2 ≈ 22% turn speed — Apex Classic feel.
+            return Mathf.Pow(t, gamepadClassicExponent);
+        }
+
+        /// <summary>
+        /// Apex Turning Extra: second gear only while the stick lives near the outer rim.
+        /// Delay then ramp, so tracking mid-stick stays on the base curve.
+        /// </summary>
+        float TickTurningExtra(float t, float dt)
+        {
+            bool wantExtra = gamepadExtraYaw > 0.01f || gamepadExtraPitch > 0.01f;
+            if (!wantExtra || t < gamepadExtraStart)
+            {
+                _extraHoldTime = 0f;
+                return 0f;
+            }
+
+            _extraHoldTime += dt;
+            float afterDelay = Mathf.Max(0f, _extraHoldTime - Mathf.Max(0f, gamepadRampDelay));
+            float ramp = gamepadRampTime > 0.0001f
+                ? Mathf.Clamp01(afterDelay / gamepadRampTime)
+                : 1f;
+
+            // Soft-gate so Extra fades in across the outer band instead of a hard cliff.
+            float edge = Mathf.InverseLerp(gamepadExtraStart, 1f, t);
+            return ramp * edge;
         }
 
         void TryStartMantle(Vector3 wish)
