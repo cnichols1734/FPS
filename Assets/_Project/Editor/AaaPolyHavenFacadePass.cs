@@ -240,7 +240,7 @@ namespace ArenaFps.Editor
 
         /// <summary>
         /// Hide the Kenney mid-lane row plus the KP_ facade overlays stamped onto it.
-        /// Colliders are left untouched so the lane blockers and NavMesh stay identical.
+        /// Colliders are destroyed with the renderers — no invisible walls.
         /// </summary>
         static void HideKenneyMidVisuals(Transform map)
         {
@@ -263,6 +263,9 @@ namespace ArenaFps.Editor
                     r.enabled = false;
                     _hidden++;
                 }
+
+                foreach (var c in t.GetComponentsInChildren<Collider>(true))
+                    Object.DestroyImmediate(c);
             }
         }
 

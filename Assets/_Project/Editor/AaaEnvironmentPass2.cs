@@ -357,25 +357,9 @@ namespace ArenaFps.Editor
 
         static void EnsureCompositeCoverColliders(Transform root)
         {
-            foreach (Transform child in root)
-            {
-                if (!child.name.StartsWith("Cover_"))
-                    continue;
-                var renderers = child.GetComponentsInChildren<Renderer>();
-                if (renderers.Length == 0)
-                    continue;
-                var bounds = renderers[0].bounds;
-                for (int i = 1; i < renderers.Length; i++) bounds.Encapsulate(renderers[i].bounds);
-
-                foreach (var existing in child.GetComponents<Collider>())
-                    Object.DestroyImmediate(existing);
-
-                var c = child.gameObject.AddComponent<BoxCollider>();
-                c.center = child.InverseTransformPoint(bounds.center);
-                var localMin = child.InverseTransformPoint(bounds.min);
-                var localMax = child.InverseTransformPoint(bounds.max);
-                c.size = new Vector3(Mathf.Abs(localMax.x - localMin.x), Mathf.Abs(localMax.y - localMin.y), Mathf.Abs(localMax.z - localMin.z));
-            }
+            // Cover roots from AaaEnvironmentPass already carry a visible MeshRenderer + BoxCollider
+            // (required by BreakableCover). Do not strip or replace those — orphan parent colliders
+            // without renderers were the old invisible-wall bug.
         }
 
         static void RepairCriticalCovers(Transform root)

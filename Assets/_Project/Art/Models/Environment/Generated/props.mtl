@@ -1,0 +1,64 @@
+# Generated prop materials
+newmtl PropDefault
+Ka 0.2 0.2 0.2
+Kd 0.600 0.600 0.600
+Ks 0.15 0.15 0.15
+Ns 20
+d 1.0
+illum 2
+
+newmtl MetalGrey
+Ka 0.2 0.2 0.2
+Kd 0.550 0.560 0.580
+Ks 0.15 0.15 0.15
+Ns 20
+d 1.0
+illum 2
+
+newmtl MetalWhite
+Ka 0.2 0.2 0.2
+Kd 0.750 0.760 0.740
+Ks 0.15 0.15 0.15
+Ns 20
+d 1.0
+illum 2
+
+newmtl Burlap
+Ka 0.2 0.2 0.2
+Kd 0.550 0.480 0.320
+Ks 0.15 0.15 0.15
+Ns 20
+d 1.0
+illum 2
+
+newmtl CorrugatedMetal
+Ka 0.2 0.2 0.2
+Kd 0.450 0.420 0.380
+Ks 0.15 0.15 0.15
+Ns 20
+d 1.0
+illum 2
+
+newmtl CableBlack
+Ka 0.2 0.2 0.2
+Kd 0.120 0.120 0.120
+Ks 0.15 0.15 0.15
+Ns 20
+d 1.0
+illum 2
+
+newmtl WoodBrown
+Ka 0.2 0.2 0.2
+Kd 0.350 0.250 0.160
+Ks 0.15 0.15 0.15
+Ns 20
+d 1.0
+illum 2
+
+newmtl Concrete
+Ka 0.2 0.2 0.2
+Kd 0.620 0.620 0.580
+Ks 0.15 0.15 0.15
+Ns 20
+d 1.0
+illum 2

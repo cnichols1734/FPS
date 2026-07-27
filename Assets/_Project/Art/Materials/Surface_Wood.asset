@@ -17,7 +17,7 @@ MonoBehaviour:
   hardness: 0.3
   defaultThickness: 0.08
   canBreak: 1
-  breakHealth: 100
+  breakHealth: 90
   impactClips: []
   impactVfx: {fileID: 0}
   exitVfx: {fileID: 0}

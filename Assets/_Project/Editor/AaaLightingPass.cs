@@ -231,13 +231,11 @@ namespace ArenaFps.Editor
 
             var color = GetOrAdd<ColorAdjustments>(profile);
             SetParam(color.postExposure, 0.03f);
-            SetParam(color.contrast, 18f);
-            SetParam(color.colorFilter, new Color(0.93f, 0.96f, 1f, 1f));
-            SetParam(color.hueShift, -2f);
-            SetParam(color.saturation, -4f);
 
             var tone = GetOrAdd<Tonemapping>(profile);
             SetParam(tone.mode, TonemappingMode.ACES);
+
+            AaaUrpGradeUtil.ApplyCanonicalDustyGrade(profile, "AaaLightingPass");
 
             var vignette = GetOrAdd<Vignette>(profile);
             SetParam(vignette.color, new Color(0.025f, 0.028f, 0.035f, 1f));
@@ -258,10 +256,12 @@ namespace ArenaFps.Editor
             SetParam(grain.intensity, 0.11f);
             SetParam(grain.response, 0.72f);
 
+            // URP Lift/SMH rgb = multipliers @ 1.0 (was incorrectly written as 0-centred offsets → black screen).
             var liftGammaGain = GetOrAdd<LiftGammaGain>(profile);
-            SetParam(liftGammaGain.lift, new Vector4(-0.018f, -0.014f, 0.006f, 0f));
-            SetParam(liftGammaGain.gamma, new Vector4(0.012f, 0.008f, -0.01f, 0f));
-            SetParam(liftGammaGain.gain, new Vector4(0.025f, 0.014f, -0.005f, 0f));
+            AaaUrpGradeUtil.SetGradeVec(liftGammaGain.lift, new Vector4(0.982f, 0.986f, 1.006f, 0f), "AaaLightingPass", "lift");
+            AaaUrpGradeUtil.SetGradeVec(liftGammaGain.gamma, new Vector4(1.012f, 1.008f, 0.990f, 0f), "AaaLightingPass", "gamma");
+            AaaUrpGradeUtil.SetGradeVec(liftGammaGain.gain, new Vector4(1.025f, 1.014f, 0.995f, 0f), "AaaLightingPass", "gain");
+            AaaUrpGradeUtil.AssertGradeSafe(profile, "AaaLightingPass");
 
             foreach (var component in profile.components)
                 EditorUtility.SetDirty(component);

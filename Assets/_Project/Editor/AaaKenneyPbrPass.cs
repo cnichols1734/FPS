@@ -723,12 +723,24 @@ namespace ArenaFps.Editor
                         : Mats["plaster"];
             }
 
-            // Mid PB masses were hidden by CityKitSwap — ensure they stay invisible (colliders only).
+            // Mid PB masses hidden by CityKitSwap — keep renderers off AND strip colliders (no invisible walls).
             foreach (var t in map.GetComponentsInChildren<Transform>(true))
             {
-                if (!t.name.StartsWith("PB_Building_Mid_")) continue;
+                if (!t.name.StartsWith("PB_Building_Mid_") && !t.name.StartsWith("Bldg_")) continue;
+                bool midish = t.name.StartsWith("PB_Building_Mid_")
+                              || t.name.Contains("Bank") || t.name.Contains("Shoes")
+                              || t.name.Contains("Baskets") || t.name.Contains("TopBottom")
+                              || t.name.Contains("Deli") || t.name.Contains("Spices");
+                if (!midish) continue;
+                // Only re-hide if already hidden by a prior pass (renderer off) — strip orphan colliders.
                 foreach (var r in t.GetComponentsInChildren<Renderer>(true))
-                    r.enabled = false;
+                {
+                    if (!r.enabled)
+                    {
+                        foreach (var c in r.GetComponents<Collider>())
+                            Object.DestroyImmediate(c);
+                    }
+                }
             }
 
             ApplyOutdoorSky();
@@ -756,9 +768,11 @@ namespace ArenaFps.Editor
 
                 if (skyTower)
                 {
-                    // Prefer open sky: disable renderers on background towers.
+                    // Prefer open sky: disable renderers on background towers AND strip colliders.
                     foreach (var r in t.GetComponentsInChildren<Renderer>(true))
                         r.enabled = false;
+                    foreach (var c in t.GetComponentsInChildren<Collider>(true))
+                        Object.DestroyImmediate(c);
                     continue;
                 }
 
