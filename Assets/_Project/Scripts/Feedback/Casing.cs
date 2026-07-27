@@ -19,6 +19,9 @@ namespace ArenaFps.Feedback
 
         public void Eject(Vector3 position, Vector3 velocity)
         {
+            if (_rb == null)
+                _rb = GetComponent<Rigidbody>();
+
             gameObject.SetActive(true);
             _tinked = false;
             _retireAt = Time.time + Lifetime;

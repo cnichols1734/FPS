@@ -16,7 +16,7 @@ Shader "ArenaFps/FxAdditive"
             "IgnoreProjector" = "True"
         }
 
-        Blend SrcAlpha One
+        Blend One One
         ZWrite Off
         ZTest LEqual
         Cull Off
@@ -66,7 +66,7 @@ Shader "ArenaFps/FxAdditive"
             {
                 half4 tex = SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, input.uv);
                 half alpha = tex.a * input.color.a;
-                // Premultiplied so SrcAlpha/One gives a clean additive glow that bloom can catch.
+                // Alpha is already baked into RGB, so One/One keeps the soft shape bloom-friendly.
                 return half4(tex.rgb * input.color.rgb * alpha * _Intensity, alpha);
             }
             ENDHLSL

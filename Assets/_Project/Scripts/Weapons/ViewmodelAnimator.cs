@@ -88,9 +88,10 @@ namespace ArenaFps.Weapons
                 if (id == null)
                     continue;
 
-                // Prefer explicitly sliced ScarH_* clips over raw showcase takes.
-                if (!_clips.ContainsKey(id.Value)
-                    || clip.name.IndexOf("ScarH_", System.StringComparison.Ordinal) >= 0)
+                // Prefer explicitly renamed game clips (ScarH_*/ACR_*) over raw FBX take names.
+                bool preferred = clip.name.IndexOf("ScarH_", System.StringComparison.Ordinal) >= 0
+                                 || clip.name.IndexOf("ACR_", System.StringComparison.Ordinal) >= 0;
+                if (!_clips.ContainsKey(id.Value) || preferred)
                     _clips[id.Value] = clip;
             }
 
@@ -109,13 +110,28 @@ namespace ArenaFps.Weapons
 
         static ClipId? Resolve(string name)
         {
-            if (Contains(name, "ScarH_Idle")) return ClipId.Idle;
-            if (Contains(name, "ScarH_Fire")) return ClipId.Fire;
-            if (Contains(name, "ScarH_ReloadEmpty")) return ClipId.ReloadEmpty;
-            if (Contains(name, "ScarH_Reload")) return ClipId.Reload;
-            if (Contains(name, "ScarH_Draw")) return ClipId.Draw;
-            if (Contains(name, "ScarH_Holster")) return ClipId.Holster;
+            // Order matters: ReloadEmpty before Reload, Shoot before generic Fire tokens.
+            if (Contains(name, "ReloadEmpty")) return ClipId.ReloadEmpty;
+            if (Contains(name, "ScarH_Reload") || Contains(name, "ACR_Reload") || Contains(name, "Reload_Fast"))
+                return ClipId.Reload;
+            if (Contains(name, "ScarH_Fire") || Contains(name, "ACR_Fire") || Contains(name, "Anim_Shoot")
+                || EndsWithToken(name, "Shoot"))
+                return ClipId.Fire;
+            if (Contains(name, "ScarH_Idle") || Contains(name, "ACR_Idle") || Contains(name, "Anim_Idle")
+                || EndsWithToken(name, "Idle"))
+                return ClipId.Idle;
+            if (Contains(name, "ScarH_Draw") || Contains(name, "ACR_Draw") || Contains(name, "Anim_Draw")
+                || EndsWithToken(name, "Draw"))
+                return ClipId.Draw;
+            if (Contains(name, "ScarH_Holster") || Contains(name, "ACR_Holster") || Contains(name, "Holster"))
+                return ClipId.Holster;
             return null;
+        }
+
+        static bool EndsWithToken(string name, string token)
+        {
+            int i = name.LastIndexOf(token, System.StringComparison.OrdinalIgnoreCase);
+            return i >= 0 && i + token.Length == name.Length;
         }
 
         static bool Contains(string name, string token) =>
@@ -127,7 +143,7 @@ namespace ArenaFps.Weapons
             if (_animator == null || _clips.Count == 0)
                 return;
 
-            _graph = PlayableGraph.Create("ScarH_Viewmodel");
+            _graph = PlayableGraph.Create("Viewmodel");
             _graph.SetTimeUpdateMode(DirectorUpdateMode.GameTime);
 
             _slotOf.Clear();

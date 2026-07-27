@@ -94,10 +94,19 @@ namespace ArenaFps.Editor
             tag.thicknessOverride = thickness;
 
             var breakable = go.GetComponent<BreakableCover>() ?? go.AddComponent<BreakableCover>();
+            if (breakable == null)
+            {
+                Debug.LogWarning($"[SpawnArenaCombat] BreakableCover missing on {name}");
+                return;
+            }
+
             var so = new SerializedObject(breakable);
-            so.FindProperty("maxHealth").floatValue = health;
-            so.FindProperty("surface").objectReferenceValue = surface;
-            so.FindProperty("unbrokenVisual").objectReferenceValue = go;
+            var maxHealth = so.FindProperty("maxHealth");
+            var surfaceProp = so.FindProperty("surface");
+            var unbroken = so.FindProperty("unbrokenVisual");
+            if (maxHealth != null) maxHealth.floatValue = health;
+            if (surfaceProp != null) surfaceProp.objectReferenceValue = surface;
+            if (unbroken != null) unbroken.objectReferenceValue = go;
             so.ApplyModifiedPropertiesWithoutUndo();
         }
 

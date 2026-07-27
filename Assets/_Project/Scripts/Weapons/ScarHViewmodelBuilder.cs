@@ -28,16 +28,19 @@ namespace ArenaFps.Weapons
         const string TextureFolder = "Weapons/ScarH";
 
         /// <summary>
-        /// Visible rifle length in metres. A real SCAR-H is ~1.0m; viewmodels are trimmed so the
-        /// buttplate clears the 0.05m near plane instead of being sliced in half by it.
+        /// Visible rifle length in metres. Slightly under a real SCAR-H (~1.0m) so the buttplate
+        /// can sit in the eye pocket without the muzzle dominating half the frame.
         /// </summary>
-        const float TargetGunLength = 0.82f;
+        const float TargetGunLength = 0.90f;
 
         /// <summary>Rifle bounding-box centre in WeaponRoot space: right of, and below, the eye.</summary>
-        static readonly Vector2 HipCentre = new(0.105f, -0.145f);
+        static readonly Vector2 HipCentre = new(0.05f, -0.12f);
 
-        /// <summary>How far ahead of the eye the buttplate sits.</summary>
-        const float HipButtDistance = 0.06f;
+        /// <summary>
+        /// Buttplate depth vs the eye. Deep negative tucks stock + open sleeve mouths into/under
+        /// the lens so cut ends leave the frame. No post-seat shoulder push — that undoes this.
+        /// </summary>
+        const float HipButtDistance = -0.40f;
 
         /// <summary>Rigid carrier bone for the rifle meshes in this pack.</summary>
         const string GunBoneName = "Weapon";
@@ -83,14 +86,21 @@ namespace ArenaFps.Weapons
 
         static void DestroyStale(Transform weaponRoot)
         {
-            foreach (var name in new[] { "PlaceholderAR", "M4_Viewmodel", RootName })
+            var doomed = new System.Collections.Generic.List<GameObject>();
+            for (int i = 0; i < weaponRoot.childCount; i++)
             {
-                var stale = weaponRoot.Find(name);
-                if (stale == null)
-                    continue;
-                // Destroy is deferred to end of frame; rename so the rebuild cannot find it.
-                stale.name = "__stale";
-                Object.Destroy(stale.gameObject);
+                var child = weaponRoot.GetChild(i);
+                var n = child.name;
+                if (n == "PlaceholderAR" || n == "M4_Viewmodel" || n == RootName
+                    || n == AcrViewmodelBuilder.RootName || n == "__stale"
+                    || n.StartsWith("__stale", System.StringComparison.Ordinal))
+                    doomed.Add(child.gameObject);
+            }
+
+            for (int i = 0; i < doomed.Count; i++)
+            {
+                doomed[i].name = "__stale";
+                Object.DestroyImmediate(doomed[i]);
             }
         }
 

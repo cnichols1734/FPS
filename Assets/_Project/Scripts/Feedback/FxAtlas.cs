@@ -1,4 +1,8 @@
 using UnityEngine;
+#if UNITY_EDITOR
+using System.IO;
+using UnityEditor;
+#endif
 
 namespace ArenaFps.Feedback
 {
@@ -8,8 +12,10 @@ namespace ArenaFps.Feedback
     /// </summary>
     public static class FxAtlas
     {
-        const int Size = 256;
+        const int Size = 512;
         const int Half = Size / 2;
+        const string BakedAdditivePath = "Assets/_Project/Art/VFX/Fx_Additive_Atlas.png";
+        const string BakedDecalPath = "Assets/_Project/Art/VFX/Fx_Decal_Atlas.png";
 
         // Quadrant UV rects, inset half a texel to keep bilinear taps inside their cell.
         const float Inset = 0.5f / Size;
@@ -28,8 +34,8 @@ namespace ArenaFps.Feedback
         static Material _additiveMaterial;
         static Material _decalMaterial;
 
-        public static Texture2D AdditiveTexture => _additive != null ? _additive : _additive = BuildAdditive();
-        public static Texture2D DecalTexture => _decal != null ? _decal : _decal = BuildDecal();
+        public static Texture2D AdditiveTexture => _additive != null ? _additive : _additive = TryLoadBaked(BakedAdditivePath) ?? BuildAdditive();
+        public static Texture2D DecalTexture => _decal != null ? _decal : _decal = TryLoadBaked(BakedDecalPath) ?? BuildDecal();
 
         public static Material AdditiveMaterial
         {
@@ -37,14 +43,16 @@ namespace ArenaFps.Feedback
             {
                 if (_additiveMaterial != null)
                     return _additiveMaterial;
-                var shader = Shader.Find("ArenaFps/FxAdditive");
-                _additiveMaterial = new Material(shader != null ? shader : Shader.Find("Sprites/Default"))
+                var shader = Shader.Find("ArenaFps/FxAdditive")
+                    ?? Shader.Find("Universal Render Pipeline/Particles/Unlit")
+                    ?? Shader.Find("Sprites/Default");
+                _additiveMaterial = new Material(shader)
                 {
                     name = "Fx_Additive_Runtime"
                 };
                 _additiveMaterial.mainTexture = AdditiveTexture;
                 if (_additiveMaterial.HasProperty("_Intensity"))
-                    _additiveMaterial.SetFloat("_Intensity", 2.6f);
+                    _additiveMaterial.SetFloat("_Intensity", 2.35f);
                 return _additiveMaterial;
             }
         }
@@ -55,8 +63,10 @@ namespace ArenaFps.Feedback
             {
                 if (_decalMaterial != null)
                     return _decalMaterial;
-                var shader = Shader.Find("ArenaFps/FxAlpha");
-                _decalMaterial = new Material(shader != null ? shader : Shader.Find("Sprites/Default"))
+                var shader = Shader.Find("ArenaFps/FxAlpha")
+                    ?? Shader.Find("Universal Render Pipeline/Particles/Unlit")
+                    ?? Shader.Find("Sprites/Default");
+                _decalMaterial = new Material(shader)
                 {
                     name = "Fx_Decal_Runtime"
                 };
@@ -73,48 +83,55 @@ namespace ArenaFps.Feedback
 
             FillQuad(pixels, 0, 0, (u, v) =>
             {
-                // Soft round spark core with a hot centre.
+                // Hot spark core with a tiny lens halo, used for debris glints and muzzle embers.
                 float r = Radius(u, v);
-                float a = Mathf.Clamp01(1f - r);
-                a = a * a * a;
-                return new Color(1f, 1f, 1f, a + Mathf.Clamp01(1f - r * 3.2f) * 0.6f);
+                float core = Mathf.Pow(Mathf.Clamp01(1f - r * 3.8f), 1.4f);
+                float halo = Mathf.Pow(Mathf.Clamp01(1f - r), 4.8f) * 0.5f;
+                float grain = 0.82f + Noise(u * 23f, v * 23f, 13) * 0.26f;
+                return new Color(1f, 1f, 1f, Mathf.Clamp01((core + halo) * grain));
             });
 
             FillQuad(pixels, 1, 0, (u, v) =>
             {
-                // Tracer streak: bright core line, soft along the length, hard-ish across it.
+                // Tracer streak: needle core, warm bloom shoulder and tapered aerodynamic ends.
                 float across = Mathf.Abs(v - 0.5f) * 2f;
                 float along = Mathf.Abs(u - 0.5f) * 2f;
-                float a = Mathf.Clamp01(1f - across);
-                a = Mathf.Pow(a, 2.4f);
-                a *= Mathf.Clamp01(1f - along * along);
+                float core = Mathf.Pow(Mathf.Clamp01(1f - across * 4.6f), 1.15f);
+                float shoulder = Mathf.Pow(Mathf.Clamp01(1f - across * 1.35f), 2.8f) * 0.48f;
+                float taper = Mathf.Pow(Mathf.Clamp01(1f - along), 0.55f);
+                float head = Mathf.Exp(-Mathf.Pow((u - 0.72f) * 7f, 2f)) * 0.35f;
+                float a = Mathf.Clamp01((core + shoulder + head) * taper);
                 return new Color(1f, 1f, 1f, a);
             });
 
             FillQuad(pixels, 0, 1, (u, v) =>
             {
-                // Muzzle star: hot core plus four soft spikes.
+                // Muzzle flash: asymmetric horizontal blast with secondary diagonal tongues.
                 float dx = (u - 0.5f) * 2f;
                 float dy = (v - 0.5f) * 2f;
                 float r = Mathf.Sqrt(dx * dx + dy * dy);
-                float core = Mathf.Clamp01(1f - r * 2.6f);
-                float spikes = Mathf.Clamp01(1f - r) * Mathf.Max(
-                    Mathf.Clamp01(1f - Mathf.Abs(dy) * 9f),
-                    Mathf.Clamp01(1f - Mathf.Abs(dx) * 9f));
-                float diag = Mathf.Clamp01(1f - r * 1.4f) * Mathf.Max(
-                    Mathf.Clamp01(1f - Mathf.Abs(dx - dy) * 7f),
-                    Mathf.Clamp01(1f - Mathf.Abs(dx + dy) * 7f));
-                float a = Mathf.Clamp01(core * 1.4f + spikes * 0.85f + diag * 0.45f);
+                float core = Mathf.Pow(Mathf.Clamp01(1f - r * 3.1f), 0.85f);
+                float horizontal = Mathf.Pow(Mathf.Clamp01(1f - Mathf.Abs(dy) * 8.5f), 1.2f)
+                    * Mathf.Pow(Mathf.Clamp01(1f - Mathf.Abs(dx) * 0.78f), 0.42f);
+                float forwardTongue = Mathf.Exp(-Mathf.Pow((dx - 0.28f) * 2.1f, 2f) - Mathf.Pow(dy * 5.4f, 2f));
+                float diagA = Mathf.Pow(Mathf.Clamp01(1f - Mathf.Abs(dx - dy * 1.35f) * 5.8f), 1.6f);
+                float diagB = Mathf.Pow(Mathf.Clamp01(1f - Mathf.Abs(dx + dy * 1.1f) * 7.2f), 1.8f);
+                float breakup = 0.74f + Noise(u * 17f, v * 17f, 191) * 0.38f;
+                float a = Mathf.Clamp01((core * 1.35f + horizontal * 0.9f + forwardTongue * 0.85f + (diagA + diagB) * 0.22f)
+                    * Mathf.Clamp01(1.1f - r * 0.42f) * breakup);
                 return new Color(1f, 1f, 1f, a);
             });
 
             FillQuad(pixels, 1, 1, (u, v) =>
             {
-                // Smoke puff: soft blob broken up by low-frequency noise.
+                // Smoke puff: layered soft volume with ragged alpha edges.
                 float r = Radius(u, v);
-                float n = Noise(u * 5.5f, v * 5.5f, 71) * 0.5f + Noise(u * 11f, v * 11f, 907) * 0.25f;
-                float a = Mathf.Clamp01(1f - r * (1.05f + n * 0.5f));
-                a = a * a * (0.55f + n * 0.6f);
+                float n = Noise(u * 4.5f, v * 4.5f, 71) * 0.45f
+                    + Noise(u * 10f, v * 10f, 907) * 0.28f
+                    + Noise(u * 21f, v * 21f, 233) * 0.13f;
+                float edge = 1.05f + n * 0.68f;
+                float a = Mathf.Clamp01(1f - r * edge);
+                a = Mathf.Pow(a, 2.15f) * (0.42f + n * 0.72f);
                 return new Color(1f, 1f, 1f, Mathf.Clamp01(a));
             });
 
@@ -125,8 +142,8 @@ namespace ArenaFps.Feedback
         {
             var pixels = new Color32[Size * Size];
 
-            FillQuad(pixels, 0, 0, (u, v) => BulletHole(u, v, 1231, new Color(0.05f, 0.045f, 0.04f), new Color(0.62f, 0.6f, 0.57f)));
-            FillQuad(pixels, 1, 0, (u, v) => BulletHole(u, v, 5417, new Color(0.03f, 0.03f, 0.035f), new Color(0.85f, 0.86f, 0.9f)));
+            FillQuad(pixels, 0, 0, (u, v) => BulletHole(u, v, 1231, new Color(0.035f, 0.032f, 0.028f), new Color(0.64f, 0.62f, 0.56f)));
+            FillQuad(pixels, 1, 0, (u, v) => BulletHole(u, v, 5417, new Color(0.018f, 0.02f, 0.023f), new Color(0.88f, 0.9f, 0.92f)));
             FillQuad(pixels, 0, 1, (u, v) => BloodSplat(u, v, 8821));
             FillQuad(pixels, 1, 1, (u, v) => BloodSplat(u, v, 3391));
 
@@ -153,10 +170,11 @@ namespace ArenaFps.Feedback
             ring = Mathf.Pow(ring, 1.6f) * (0.45f + Noise(u * 9f, v * 9f, seed + 5) * 0.55f);
 
             // Radial spall streaks.
-            float streak = Mathf.Clamp01(Mathf.Sin(angle * 9f + Noise(u * 3f, v * 3f, seed + 11) * 6f)) * ring * 0.35f;
+            float streak = Mathf.Clamp01(Mathf.Sin(angle * 11f + Noise(u * 3f, v * 3f, seed + 11) * 6f)) * ring * 0.44f;
+            float dust = Noise(u * 18f, v * 18f, seed + 29) * ring * 0.2f;
 
-            float alpha = Mathf.Clamp01(core + ring * 0.75f + streak);
-            var rgb = Color.Lerp(ringColor, coreColor, Mathf.Clamp01(core * 1.2f));
+            float alpha = Mathf.Clamp01(core + ring * 0.78f + streak + dust);
+            var rgb = Color.Lerp(ringColor, coreColor, Mathf.Clamp01(core * 1.3f));
             return new Color(rgb.r, rgb.g, rgb.b, alpha);
         }
 
@@ -226,6 +244,57 @@ namespace ArenaFps.Feedback
             tex.Apply(true, false);
             return tex;
         }
+
+        static Texture2D TryLoadBaked(string path)
+        {
+#if UNITY_EDITOR
+            return AssetDatabase.LoadAssetAtPath<Texture2D>(path);
+#else
+            return null;
+#endif
+        }
+
+#if UNITY_EDITOR
+        public static void BakeAtlasesToProject()
+        {
+            SaveTexture(BuildAdditive(), BakedAdditivePath);
+            SaveTexture(BuildDecal(), BakedDecalPath);
+
+            _additive = AssetDatabase.LoadAssetAtPath<Texture2D>(BakedAdditivePath);
+            _decal = AssetDatabase.LoadAssetAtPath<Texture2D>(BakedDecalPath);
+            if (_additiveMaterial != null)
+                _additiveMaterial.mainTexture = AdditiveTexture;
+            if (_decalMaterial != null)
+                _decalMaterial.mainTexture = DecalTexture;
+        }
+
+        static void SaveTexture(Texture2D texture, string path)
+        {
+            string directory = Path.GetDirectoryName(path);
+            if (!Directory.Exists(directory))
+                Directory.CreateDirectory(directory);
+
+            File.WriteAllBytes(path, texture.EncodeToPNG());
+            Object.DestroyImmediate(texture);
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
+
+            var importer = AssetImporter.GetAtPath(path) as TextureImporter;
+            if (importer == null)
+                return;
+
+            importer.textureType = TextureImporterType.Default;
+            importer.alphaSource = TextureImporterAlphaSource.FromInput;
+            importer.alphaIsTransparency = true;
+            importer.sRGBTexture = true;
+            importer.mipmapEnabled = true;
+            importer.wrapMode = TextureWrapMode.Clamp;
+            importer.filterMode = FilterMode.Bilinear;
+            importer.anisoLevel = 4;
+            importer.textureCompression = TextureImporterCompression.Uncompressed;
+            importer.maxTextureSize = 1024;
+            importer.SaveAndReimport();
+        }
+#endif
 
         static float Hash(int n)
         {

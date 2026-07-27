@@ -1,3 +1,4 @@
+using ArenaFps.Weapons;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
@@ -17,9 +18,18 @@ namespace ArenaFps.Player
         [SerializeField] float saturation = -5f;
         [SerializeField] float grain = 0.16f;
         [SerializeField] float baseVignette = 0.18f;
+        [Tooltip("Bloom intensity while ADS on a holo optic — keeps the reticle crisp.")]
+        [SerializeField] float opticAdsBloomIntensity = 0.08f;
+        [SerializeField] float opticAdsBloomThreshold = 1.35f;
+
+        Bloom _bloom;
+        WeaponController _weapon;
 
         void Awake()
         {
+            _weapon = GetComponent<WeaponController>()
+                      ?? GetComponentInParent<WeaponController>();
+
             var go = new GameObject("__ScreenLook");
             go.transform.SetParent(transform, false);
 
@@ -31,16 +41,16 @@ namespace ArenaFps.Player
             profile.name = "ScreenLook_Runtime";
             volume.profile = profile;
 
-            var bloom = profile.Add<Bloom>(true);
-            bloom.intensity.overrideState = true;
-            bloom.intensity.value = bloomIntensity;
-            bloom.threshold.overrideState = true;
-            bloom.threshold.value = bloomThreshold;
-            bloom.scatter.overrideState = true;
-            bloom.scatter.value = 0.62f;
+            _bloom = profile.Add<Bloom>(true);
+            _bloom.intensity.overrideState = true;
+            _bloom.intensity.value = bloomIntensity;
+            _bloom.threshold.overrideState = true;
+            _bloom.threshold.value = bloomThreshold;
+            _bloom.scatter.overrideState = true;
+            _bloom.scatter.value = 0.62f;
             // Half-resolution bloom keeps this affordable inside the M1 Pro GPU budget.
-            bloom.downscale.overrideState = true;
-            bloom.downscale.value = BloomDownscaleMode.Half;
+            _bloom.downscale.overrideState = true;
+            _bloom.downscale.value = BloomDownscaleMode.Half;
 
             var tonemapping = profile.Add<Tonemapping>(true);
             tonemapping.mode.overrideState = true;
@@ -67,6 +77,27 @@ namespace ArenaFps.Player
             vignette.intensity.value = baseVignette;
             vignette.smoothness.overrideState = true;
             vignette.smoothness.value = 0.4f;
+        }
+
+        void LateUpdate()
+        {
+            if (_bloom == null)
+                return;
+
+            if (_weapon == null)
+                _weapon = GetComponent<WeaponController>()
+                          ?? GetComponentInParent<WeaponController>()
+                          ?? FindAnyObjectByType<WeaponController>();
+
+            bool opticAds = _weapon != null
+                            && _weapon.Slot == WeaponController.WeaponSlot.Carbine
+                            && _weapon.AdsProgress > 0.05f;
+            float t = opticAds
+                ? Mathf.SmoothStep(0f, 1f, _weapon.AdsProgress)
+                : 0f;
+
+            _bloom.intensity.value = Mathf.Lerp(bloomIntensity, opticAdsBloomIntensity, t);
+            _bloom.threshold.value = Mathf.Lerp(bloomThreshold, opticAdsBloomThreshold, t);
         }
     }
 }

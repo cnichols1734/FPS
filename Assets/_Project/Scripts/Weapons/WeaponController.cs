@@ -10,13 +10,13 @@ using UnityEngine;
 namespace ArenaFps.Weapons
 {
     /// <summary>
-    /// Hitscan rifle and pistol with the two-layer recoil a modern shooter needs: an aim punch that
+    /// Hitscan SCAR-H and ACR with the two-layer recoil a modern shooter needs: an aim punch that
     /// genuinely moves the shot, and a separate visual kick that only moves the model. Spread blooms
     /// with fire rate and movement, so holding the trigger costs accuracy without costing control.
     /// </summary>
     public sealed class WeaponController : MonoBehaviour
     {
-        public enum WeaponSlot { AssaultRifle, Pistol }
+        public enum WeaponSlot { AssaultRifle, Carbine }
 
         [System.Serializable]
         public struct WeaponStats
@@ -72,23 +72,23 @@ namespace ArenaFps.Weapons
             automatic = true,
         };
 
-        [SerializeField] WeaponStats pistol = new()
+        [SerializeField] WeaponStats carbine = new()
         {
-            name = "P-18",
-            damage = 38f,
-            roundsPerMinute = 340f,
-            range = 70f,
-            adsFov = 52f,
-            adsTime = 0.14f,
-            hipSpread = 1.5f,
-            adsSpread = 0.13f,
-            spreadPerShot = 0.5f,
-            spreadRecovery = 5.5f,
-            maxSpread = 3.6f,
-            magSize = 12,
-            // Overwritten in Awake from the authored reload clip length.
-            reloadTime = 1.512f,
-            automatic = false,
+            name = "ACR",
+            damage = 22f,
+            roundsPerMinute = 720f,
+            range = 120f,
+            adsFov = 48f,
+            adsTime = 0.16f,
+            hipSpread = 1.7f,
+            adsSpread = 0.12f,
+            spreadPerShot = 0.22f,
+            spreadRecovery = 4.0f,
+            maxSpread = 3.8f,
+            magSize = 30,
+            // Overwritten from the ACR reload clip length.
+            reloadTime = 3.3f,
+            automatic = true,
         };
 
         WeaponSlot _slot = WeaponSlot.AssaultRifle;
@@ -113,7 +113,8 @@ namespace ArenaFps.Weapons
         float _sprintUntil;
         bool _fireWasHeld;
 
-        public WeaponStats Current => _slot == WeaponSlot.AssaultRifle ? ar : pistol;
+        public WeaponStats Current => _slot == WeaponSlot.AssaultRifle ? ar : carbine;
+        public WeaponSlot Slot => _slot;
         public int Ammo => _ammo;
         public bool IsAds => _ads > 0.5f;
         public float AdsProgress => _ads;
@@ -135,7 +136,7 @@ namespace ArenaFps.Weapons
         void Awake()
         {
             ar.recoil = RecoilPattern.Rifle;
-            pistol.recoil = RecoilPattern.Pistol;
+            carbine.recoil = RecoilPattern.Carbine;
 
             _controller = GetComponent<FpsController>();
 
@@ -149,19 +150,11 @@ namespace ArenaFps.Weapons
 
             if (viewmodel != null)
             {
-                var gun = ScarHViewmodelBuilder.Ensure(viewmodel);
                 motion = viewmodel.GetComponent<ViewmodelMotion>() ?? viewmodel.gameObject.AddComponent<ViewmodelMotion>();
                 motion.Bind(_controller);
-
-                // FPS-authored hands already sit in camera space — keep procedural sway light.
+                // Zero WeaponRoot before seating — both packs own their hip pocket on the wrapper.
                 motion.ConfigureAuthoredFpsPose();
-
-                var pivot = _controller != null ? _controller.CameraPivot : null;
-                var sight = ScarHViewmodelBuilder.FindDeep(gun, "SightAlign");
-                if (sight != null && pivot != null)
-                    motion.ConfigureIronSightAds(sight, pivot);
-
-                _viewAnim = gun != null ? gun.GetComponent<ViewmodelAnimator>() : null;
+                BuildActiveViewmodel();
                 IsolateViewmodel(viewmodel);
             }
 
@@ -179,27 +172,17 @@ namespace ArenaFps.Weapons
             if (GetComponent<AdsDepthOfField>() == null)
                 gameObject.AddComponent<AdsDepthOfField>();
 
-            // Prefer the authored reload clip length; fall back to the SFX recording.
-            float reloadSeconds = _viewAnim != null ? _viewAnim.ReloadDuration : 0f;
-            if (reloadSeconds < 0.05f)
-                reloadSeconds = SfxBank.Duration(Sfx.Reload);
-            if (reloadSeconds > 0.05f)
-            {
-                ar.reloadTime = reloadSeconds;
-                pistol.reloadTime = reloadSeconds;
-            }
-
+            SyncReloadTimesFromClips();
             _ammo = Current.magSize;
         }
 
-        /// <summary>Re-binds FirePoint under the SCAR-H after the viewmodel is built or swapped.</summary>
+        /// <summary>Re-binds FirePoint after the viewmodel is built or swapped.</summary>
         public void RefreshViewmodelAnchors()
         {
             if (viewmodel == null)
                 return;
 
-            // Anchors ride the rifle bone, so a path lookup will not reach them.
-            firePoint = ScarHViewmodelBuilder.FindDeep(viewmodel, "FirePoint");
+            firePoint = FindAnchor(viewmodel, "FirePoint");
             if (firePoint == null)
             {
                 var fp = new GameObject("FirePoint");
@@ -210,6 +193,71 @@ namespace ArenaFps.Weapons
 
             if (feedback != null)
                 feedback.RebindAnchors(viewmodel);
+        }
+
+        Transform BuildActiveViewmodel()
+        {
+            if (viewmodel == null)
+                return null;
+
+            motion?.ClearAuthoredHipFraming();
+
+            Transform gun = _slot == WeaponSlot.AssaultRifle
+                ? ScarHViewmodelBuilder.Ensure(viewmodel)
+                : AcrViewmodelBuilder.Ensure(viewmodel);
+
+            var pivot = _controller != null ? _controller.CameraPivot : null;
+            var sight = FindAnchor(gun, "SightAlign");
+            if (sight != null && pivot != null)
+            {
+                // Holo: tight relief, zero vertical bias, then screen-calibrate the glowing
+                // reticle onto the HUD / hitscan centre. Irons keep ghost-ring drop.
+                if (_slot == WeaponSlot.Carbine)
+                {
+                    // ADS first on pure Head_Cam, then layer the hip pocket/zoom so aiming
+                    // still lands on the old perfect seating.
+                    motion?.ConfigureIronSightAds(sight, pivot, 0.16f, 0f);
+                    float prevFov = worldCamera != null ? worldCamera.fieldOfView : 0f;
+                    if (worldCamera != null)
+                        worldCamera.fieldOfView = carbine.adsFov;
+                    motion?.CalibrateAdsToViewportCenter(pivot, () =>
+                        AcrViewmodelBuilder.TryMeasureReticleWorld(gun, out var point)
+                            ? point
+                            : sight.position);
+                    if (worldCamera != null)
+                        worldCamera.fieldOfView = prevFov;
+                    motion?.ConfigureAuthoredHipFraming(
+                        gun, AcrViewmodelBuilder.HipPocket, AcrViewmodelBuilder.HipZoomScale);
+                }
+                else
+                {
+                    motion?.ConfigureIronSightAds(sight, pivot);
+                }
+            }
+
+            _viewAnim = gun != null ? gun.GetComponent<ViewmodelAnimator>() : null;
+            return gun;
+        }
+
+        void SyncReloadTimesFromClips()
+        {
+            float reloadSeconds = _viewAnim != null ? _viewAnim.ReloadDuration : 0f;
+            if (reloadSeconds < 0.05f)
+                reloadSeconds = SfxBank.Duration(Sfx.Reload);
+            if (reloadSeconds <= 0.05f)
+                return;
+
+            if (_slot == WeaponSlot.AssaultRifle)
+                ar.reloadTime = reloadSeconds;
+            else
+                carbine.reloadTime = reloadSeconds;
+        }
+
+        static Transform FindAnchor(Transform root, string name)
+        {
+            if (root == null)
+                return null;
+            return ScarHViewmodelBuilder.FindDeep(root, name) ?? AcrViewmodelBuilder.FindDeep(root, name);
         }
 
         void Update()
@@ -223,7 +271,7 @@ namespace ArenaFps.Weapons
                 return;
 
             if (input.Weapon1PressedThisFrame) Equip(WeaponSlot.AssaultRifle);
-            if (input.Weapon2PressedThisFrame) Equip(WeaponSlot.Pistol);
+            if (input.Weapon2PressedThisFrame) Equip(WeaponSlot.Carbine);
 
             if (_controller != null && _controller.IsSprinting)
                 _sprintUntil = Time.time + sprintToFireDelay;
@@ -295,9 +343,13 @@ namespace ArenaFps.Weapons
         void TickRecoil(float dt)
         {
             // The view holds at full kick briefly, then recovers — an instant return feels weightless.
+            // ACR ADS recovers slower so the climb sticks like COD instead of springing back down.
             if (Time.time >= _recoveryHoldUntil)
             {
-                float k = 1f - Mathf.Exp(-Current.recoil.recovery * dt);
+                float recovery = Current.recoil.recovery;
+                if (_slot == WeaponSlot.Carbine)
+                    recovery *= Mathf.Lerp(1f, 0.55f, _ads);
+                float k = 1f - Mathf.Exp(-recovery * dt);
                 _aimPunchTarget = Vector2.Lerp(_aimPunchTarget, Vector2.zero, k);
             }
             _aimPunch = Vector2.Lerp(_aimPunch, _aimPunchTarget, 1f - Mathf.Exp(-34f * dt));
@@ -311,15 +363,18 @@ namespace ArenaFps.Weapons
         {
             if (_slot == slot || _reloading)
                 return;
+
             _slot = slot;
             _ammo = Current.magSize;
             _ads = 0f;
             _spreadBloom = 0f;
             _shotIndex = 0;
-            if (_slot == WeaponSlot.AssaultRifle)
-                _viewAnim?.PlayDraw();
-            else
-                motion?.AddReloadShake();
+
+            BuildActiveViewmodel();
+            RefreshViewmodelAnchors();
+            SyncReloadTimesFromClips();
+            _viewAnim?.PlayDraw();
+
             Sfx3D.Instance.Play2D(Sfx.BoltRelease, 0.5f);
             dualSense?.SetLightState(DualSenseDriver.LightState.Idle);
         }
@@ -337,17 +392,16 @@ namespace ArenaFps.Weapons
                 reloadSeconds = SfxBank.Duration(Sfx.Reload);
             if (reloadSeconds > 0.05f)
             {
-                ar.reloadTime = reloadSeconds;
-                pistol.reloadTime = reloadSeconds;
+                if (_slot == WeaponSlot.AssaultRifle)
+                    ar.reloadTime = reloadSeconds;
+                else
+                    carbine.reloadTime = reloadSeconds;
             }
 
             _reloading = true;
             _reloadUntil = Time.time + Current.reloadTime;
             _ads = 0f;
-            if (_slot == WeaponSlot.AssaultRifle)
-                _viewAnim?.PlayReload(empty);
-            else
-                motion?.AddReloadShake();
+            _viewAnim?.PlayReload(empty);
             // One authored one-shot covers the whole reload. Do not layer MagOut/MagIn/Bolt on top.
             Sfx3D.Instance.Play2D(Sfx.Reload, 0.75f, 0.02f);
         }
@@ -388,8 +442,11 @@ namespace ArenaFps.Weapons
 
             latencyProbe?.NotifyFireInput();
             dualSense?.PulseFire();
-            Sfx3D.Instance.Play2D(_slot == WeaponSlot.Pistol ? Sfx.PistolShot : Sfx.RifleShot, 0.62f, 0.05f);
-            if (_slot == WeaponSlot.AssaultRifle)
+            Sfx3D.Instance.Play2D(Sfx.RifleShot, 0.62f, 0.05f);
+            // ACR fire clip has baked climb that fights a COD-style ADS pattern. Hip plays it;
+            // ADS uses procedural kick only so the optic climbs in a learnable way.
+            bool muteFireAnim = _slot == WeaponSlot.Carbine && _ads > 0.55f;
+            if (!muteFireAnim)
                 _viewAnim?.PlayFire(interval);
 
             var camera = worldCamera.transform;
@@ -397,7 +454,7 @@ namespace ArenaFps.Weapons
             var muzzle = feedback != null ? feedback.MuzzlePosition : origin;
 
             feedback?.Flash();
-            ImpactFx.Instance.MuzzleFlash(muzzle, camera.forward, _slot == WeaponSlot.Pistol ? 0.7f : 1f);
+            ImpactFx.Instance.MuzzleFlash(muzzle, camera.forward, _slot == WeaponSlot.Carbine ? 0.85f : 1f);
             if (feedback != null)
                 ImpactFx.Instance.EjectCasing(feedback.EjectionPosition, camera.right, camera.up,
                     _controller != null ? _controller.Velocity : Vector3.zero);
@@ -480,14 +537,32 @@ namespace ArenaFps.Weapons
         {
             var kick = Current.recoil.Sample(_shotIndex++);
 
-            // Aiming down sights tightens the pattern, exactly as a braced stance should.
-            kick *= Mathf.Lerp(1f, 0.68f, _ads);
+            // COD-style ADS: clear climb you pull against, not a trampoline and not a frozen optic.
+            // Authored fire clip stays muted above; this is the feel layer.
+            // ACR ADS: full pattern weight — climb + lateral walk + gun punch, not pitch-only.
+            float adsRecoil = _slot == WeaponSlot.Carbine ? 0.78f : 0.68f;
+            kick *= Mathf.Lerp(1f, adsRecoil, _ads);
+            if (_slot == WeaponSlot.Carbine)
+            {
+                kick.x *= Mathf.Lerp(1f, 0.7f, _ads);  // vertical
+                kick.y *= Mathf.Lerp(1f, 0.95f, _ads); // keep the horizontal walk alive
+            }
 
             _aimPunchTarget += kick;
-            _recoveryHoldUntil = Time.time + Current.recoil.recoveryDelay;
+            float hold = Current.recoil.recoveryDelay;
+            if (_slot == WeaponSlot.Carbine)
+                hold *= Mathf.Lerp(1f, 1.45f, _ads);
+            _recoveryHoldUntil = Time.time + hold;
 
             _spreadBloom = Mathf.Min(Current.maxSpread, _spreadBloom + Current.spreadPerShot);
-            motion?.AddRecoil(kick, _slot == WeaponSlot.Pistol ? 1.15f : 0.85f);
+
+            float viewPunch = _slot == WeaponSlot.Carbine
+                ? Mathf.Lerp(0.75f, 0.55f, _ads)
+                : 0.85f;
+            var viewKick = kick;
+            if (_slot == WeaponSlot.Carbine)
+                viewKick *= Mathf.Lerp(1f, 0.85f, _ads);
+            motion?.AddRecoil(viewKick, viewPunch);
         }
 
         bool WasFirePressed()

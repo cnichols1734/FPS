@@ -62,6 +62,15 @@ namespace ArenaFps.Weapons
             if (_dof == null || _volume == null)
                 return;
 
+            // Holo optics sit in the near field. Bokeh that softens irons also smears the
+            // clear glass and reticle — skip DOF on the carbine.
+            if (_weapon != null && _weapon.Slot == WeaponController.WeaponSlot.Carbine)
+            {
+                _volume.weight = 0f;
+                _dof.mode.value = DepthOfFieldMode.Off;
+                return;
+            }
+
             float ads = _weapon != null ? _weapon.AdsProgress : 0f;
             float eased = ads * ads * (3f - 2f * ads);
 

@@ -1,3 +1,4 @@
+using ArenaFps.Core;
 using ArenaFps.Feedback;
 using UnityEngine;
 using UnityEngine.Events;
@@ -11,6 +12,7 @@ namespace ArenaFps.Combat
         [SerializeField] RagdollDriver ragdoll;
 
         BotPoseDriver _pose;
+        TeamMember _team;
 
         public float MaxHealth => maxHealth;
         public float Current { get; private set; }
@@ -70,6 +72,9 @@ namespace ArenaFps.Combat
                 return;
             }
 
+            if (IsFriendlyFire(info.Attacker))
+                return;
+
             info.Part = hitbox != null ? hitbox.part : HitboxPart.Torso;
             info.Multiplier = hitbox != null ? hitbox.damageMultiplier : 1f;
 
@@ -124,6 +129,20 @@ namespace ArenaFps.Combat
         {
             Current = health > 0f ? health : maxHealth;
             ragdoll?.ResetPose();
+        }
+
+        bool IsFriendlyFire(GameObject attacker)
+        {
+            if (attacker == null)
+                return false;
+            if (_team == null)
+                _team = GetComponent<TeamMember>();
+            var other = attacker.GetComponent<TeamMember>();
+            if (_team == null || other == null)
+                return false;
+            if (_team.Team == TeamId.None || other.Team == TeamId.None)
+                return false;
+            return _team.Team == other.Team;
         }
     }
 }
